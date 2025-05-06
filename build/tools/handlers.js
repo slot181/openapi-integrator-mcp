@@ -6,7 +6,10 @@ import { randomUUID } from 'crypto';
 import FormData from 'form-data';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { isGenerateSpeechArgs, isTranscribeAudioArgs } from '../types/index.js';
-import { ensureDirectoryExists, isValidHttpUrl, downloadFile, saveImageToFile, uploadToCfImgbed } from '../utils/index.js';
+// Import necessary utils including the new video handler and potentially the base URL constant
+import { ensureDirectoryExists, isValidHttpUrl, downloadFile, saveImageToFile, uploadToCfImgbed, handleSiliconFlowVideoGeneration, // Import the background task handler
+sendImageUploadNotification, // Import the new image notification handler
+ } from '../utils/index.js';
 // The handler now returns the success result or throws an McpError
 export async function handleToolCall({ toolName, args, axiosInstance, config }) {
     try {
@@ -89,6 +92,8 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }) 
                         cloudflareUrl = await uploadToCfImgbed(imageBuffer, filename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
                         if (cloudflareUrl) {
                             cloudflareUploadSuccess = true;
+                            // Send notification on successful upload
+                            sendImageUploadNotification(config, filename, args.prompt, cloudflareUrl); // Added notification call
                         }
                     }
                     else if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && !localPath) {
@@ -97,6 +102,8 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }) 
                         cloudflareUrl = await uploadToCfImgbed(imageBuffer, randomFilename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
                         if (cloudflareUrl) {
                             cloudflareUploadSuccess = true;
+                            // Send notification on successful upload (using randomFilename here)
+                            sendImageUploadNotification(config, randomFilename, args.prompt, cloudflareUrl); // Added notification call
                         }
                     }
                     results.push({
@@ -273,6 +280,8 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }) 
                         cloudflareUrl = await uploadToCfImgbed(imageBuffer, filename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
                         if (cloudflareUrl) {
                             cloudflareUploadSuccess = true;
+                            // Send notification on successful upload
+                            sendImageUploadNotification(config, filename, args.prompt, cloudflareUrl); // Added notification call
                         }
                     }
                     else if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && !localPath) {
@@ -280,6 +289,8 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }) 
                         cloudflareUrl = await uploadToCfImgbed(imageBuffer, randomFilename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
                         if (cloudflareUrl) {
                             cloudflareUploadSuccess = true;
+                            // Send notification on successful upload (using randomFilename here)
+                            sendImageUploadNotification(config, randomFilename, args.prompt, cloudflareUrl); // Added notification call
                         }
                     }
                     results.push({
@@ -290,6 +301,88 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }) 
                     });
                 }
                 return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+            }
+            case 'generate_video': {
+                // Validate required parameters first
+                if (!args || typeof args !== 'object' || !args.prompt || typeof args.prompt !== 'string' || !args.image_size || typeof args.image_size !== 'string') {
+                    throw new McpError(ErrorCode.InvalidParams, 'Parameters "prompt" (string) and "image_size" (string) are required for generate_video.');
+                }
+                const modelToUseForVideo = args.model || config.siliconflowVideoModel;
+                const isImageToVideoModel = modelToUseForVideo.includes('I2V'); // Check if it's an Image-to-Video model
+                // Validate 'image' parameter based on model type
+                if (isImageToVideoModel && (!args.image || typeof args.image !== 'string')) {
+                    throw new McpError(ErrorCode.InvalidParams, `Parameter "image" (string URL or base64 data) is required when using an Image-to-Video model like "${modelToUseForVideo}".`);
+                }
+                if (!isImageToVideoModel && args.image) {
+                    console.warn(`[openapi-integrator-mcp] Parameter "image" was provided but the selected model "${modelToUseForVideo}" is a Text-to-Video model. The "image" parameter will be ignored.`);
+                    // We don't throw an error, just ignore the image param for T2V models
+                }
+                // Construct the request body for SiliconFlow /v1/video/submit
+                const videoRequestBody = {
+                    model: modelToUseForVideo,
+                    prompt: args.prompt,
+                    image_size: args.image_size,
+                };
+                if (args.negative_prompt)
+                    videoRequestBody.negative_prompt = args.negative_prompt;
+                if (args.seed)
+                    videoRequestBody.seed = args.seed;
+                // Only include image if it's an I2V model and image was provided
+                if (isImageToVideoModel && args.image)
+                    videoRequestBody.image = args.image;
+                // Check for SiliconFlow API Key
+                if (!config.siliconflowApiKey) {
+                    throw new McpError(ErrorCode.InvalidRequest, 'SiliconFlow API Key (SILICONFLOW_API_KEY) is not configured.');
+                }
+                try {
+                    console.log('[openapi-integrator-mcp] Submitting video generation job to SiliconFlow:', JSON.stringify(videoRequestBody, null, 2));
+                    // Use base URL from config
+                    const submitUrl = `${config.siliconflowBaseUrl}/v1/video/submit`;
+                    const submitResponse = await axios.post(submitUrl, videoRequestBody, {
+                        headers: {
+                            'Authorization': `Bearer ${config.siliconflowApiKey}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                        },
+                        timeout: config.requestTimeout, // Use standard request timeout for submission
+                    });
+                    const requestId = submitResponse.data?.requestId;
+                    if (!requestId || typeof requestId !== 'string') {
+                        console.error('[openapi-integrator-mcp] SiliconFlow submit response missing requestId:', submitResponse.data);
+                        throw new McpError(ErrorCode.InternalError, 'Failed to submit video generation job: Invalid response from SiliconFlow API.');
+                    }
+                    console.log(`[openapi-integrator-mcp] Video generation job submitted successfully. Request ID: ${requestId}`);
+                    // Start background polling - DO NOT await this
+                    handleSiliconFlowVideoGeneration(requestId, args.prompt, modelToUseForVideo, config.siliconflowApiKey, config // Pass the whole config object
+                    );
+                    // Return immediate success response to the AI
+                    return {
+                        content: [{
+                                type: 'text',
+                                text: JSON.stringify({
+                                    status: 'submitted',
+                                    message: `Video generation job submitted successfully with Request ID: ${requestId}. You will be notified upon completion.`,
+                                    requestId: requestId
+                                })
+                            }]
+                    };
+                }
+                catch (error) {
+                    console.error(`[openapi-integrator-mcp] Error submitting video generation job:`, error.response?.data || error.message);
+                    let errorMessage = 'Failed to submit video generation job.';
+                    let mcpErrorCode = ErrorCode.InternalError;
+                    if (axios.isAxiosError(error)) {
+                        errorMessage = `SiliconFlow API Error: ${error.response?.data?.message || error.message}`;
+                        if (error.response?.status === 401)
+                            mcpErrorCode = ErrorCode.InvalidRequest; // Unauthorized
+                        if (error.response?.status === 400)
+                            mcpErrorCode = ErrorCode.InvalidParams; // Bad request likely due to params
+                    }
+                    else if (error instanceof Error) {
+                        errorMessage = error.message;
+                    }
+                    throw new McpError(mcpErrorCode, errorMessage);
+                }
             }
             case 'transcribe_audio': {
                 if (!isTranscribeAudioArgs(args)) {

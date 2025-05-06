@@ -63,4 +63,15 @@ export interface AppConfig {
   cfImgbedApiKey?: string;
   // Default Edit Image Model
   defaultEditImageModel: string;
+  // SiliconFlow Configuration (Optional)
+  siliconflowApiKey?: string;
+  siliconflowVideoModel: string; // Default model is required
+  siliconflowBaseUrl: string; // Added Base URL
+  // Notification Configuration (Optional)
+  onebotHttpUrl?: string;
+  onebotAccessToken?: string;
+  onebotMessageType?: 'private' | 'group';
+  onebotTargetId?: string;
+  telegramBotToken?: string;
+  telegramChatId?: string;
 }

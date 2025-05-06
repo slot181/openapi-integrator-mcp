@@ -89,5 +89,41 @@ const toolDefinitions = [
             required: ['image', 'prompt'],
         },
     },
+    {
+        name: 'generate_video',
+        description: 'Submits a job to generate a video using the SiliconFlow API based on a text prompt or an image.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                prompt: {
+                    type: 'string',
+                    description: 'The text prompt to generate the video description from.',
+                },
+                model: {
+                    type: 'string',
+                    description: `Video generation model to use (default: ${config.siliconflowVideoModel}). Options: Wan-AI/Wan2.1-T2V-14B, Wan-AI/Wan2.1-T2V-14B-Turbo, Wan-AI/Wan2.1-I2V-14B-720P, Wan-AI/Wan2.1-I2V-14B-720P-Turbo.`,
+                    enum: ['Wan-AI/Wan2.1-T2V-14B', 'Wan-AI/Wan2.1-T2V-14B-Turbo', 'Wan-AI/Wan2.1-I2V-14B-720P', 'Wan-AI/Wan2.1-I2V-14B-720P-Turbo'],
+                },
+                image_size: {
+                    type: 'string',
+                    description: 'Length-width ratio of the generated video.',
+                    enum: ['1280x720', '720x1280', '960x960'],
+                },
+                negative_prompt: {
+                    type: 'string',
+                    description: 'Optional negative prompt.',
+                },
+                image: {
+                    type: 'string',
+                    description: 'Image URL or base64 encoded image data (data:image/png;base64,XXX). Required if using an Image-to-Video model (Wan-AI/Wan2.1-I2V...).',
+                },
+                seed: {
+                    type: 'integer',
+                    description: 'Optional seed for the random number generator.',
+                },
+            },
+            required: ['prompt', 'image_size'], // Prompt and image_size are always required based on API docs
+        },
+    },
 ];
 export default toolDefinitions;

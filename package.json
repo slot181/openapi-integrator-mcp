@@ -1,6 +1,6 @@
 {
   "name": "@stone181/openapi-integrator-mcp",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Image Generation MCP Server using OpenAI compatible APIs - A Model Context Protocol server for AI image generation",
   "type": "module",
   "main": "build/index.js",
@@ -29,8 +29,10 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
+    "@types/node-telegram-bot-api": "^0.64.8",
     "axios": "^1.6.7",
-    "form-data": "^4.0.0"
+    "form-data": "^4.0.0",
+    "node-telegram-bot-api": "^0.66.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.24",
