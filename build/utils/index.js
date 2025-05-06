@@ -68,21 +68,28 @@ export async function uploadToCfImgbed(imageBuffer, filename, uploadUrl, apiKey)
         const formData = new FormData();
         formData.append('file', imageBuffer, { filename }); // Pass buffer directly
         console.info(`[openapi-integrator-mcp] Attempting Cloudflare ImgBed upload to: ${uploadUrl} with filename: ${filename}`);
-        const response = await axios.post(uploadUrl, formData, {
+        // Construct the upload URL with the API key as 'authCode' query parameter
+        const separator = uploadUrl.includes('?') ? '&' : '?';
+        const uploadUrlWithAuth = `${uploadUrl}${separator}authCode=${apiKey}`;
+        const response = await axios.post(uploadUrlWithAuth, formData, {
             headers: {
-                ...formData.getHeaders(),
-                'Authorization': `Bearer ${apiKey}`,
+                ...formData.getHeaders(), // Important for multipart/form-data
             },
-            maxBodyLength: Infinity, // Important for large file uploads
+            maxBodyLength: Infinity,
             maxContentLength: Infinity,
         });
-        if (response.status === 200 && response.data?.success && response.data?.data?.url) {
-            const cfUrl = response.data.data.url;
-            console.info(`[openapi-integrator-mcp] Cloudflare ImgBed upload successful: ${cfUrl}`);
-            return cfUrl;
+        // Check response based on typical ImgBed success structure from reference
+        if (response.status === 200 && Array.isArray(response.data) && response.data.length > 0 && response.data[0]?.src) {
+            const imagePathSegment = response.data[0].src;
+            // Construct the full URL based on the upload URL's origin
+            const parsedUploadUrl = new URL(uploadUrl); // Use the original uploadUrl for base
+            const baseUrlStr = `${parsedUploadUrl.protocol}//${parsedUploadUrl.host}`;
+            const fullUrl = new URL(imagePathSegment, baseUrlStr).toString();
+            console.info(`[openapi-integrator-mcp] Cloudflare ImgBed upload successful: ${fullUrl}`);
+            return fullUrl;
         }
         else {
-            console.error(`[openapi-integrator-mcp] Cloudflare ImgBed upload failed. Status: ${response.status}, Data: ${JSON.stringify(response.data)}`);
+            console.error(`[openapi-integrator-mcp] Cloudflare ImgBed upload failed or unexpected response format. Status: ${response.status}, Data: ${JSON.stringify(response.data)}`);
             return null;
         }
     }

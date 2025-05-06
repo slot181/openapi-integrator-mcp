@@ -61,4 +61,6 @@ export interface AppConfig {
   // Cloudflare ImgBed Configuration (Optional)
   cfImgbedUploadUrl?: string;
   cfImgbedApiKey?: string;
+  // Default Edit Image Model
+  defaultEditImageModel: string;
 }

@@ -38,6 +38,9 @@ const WEBDAV_PASSWORD = cliArgs.WEBDAV_PASSWORD || process.env.WEBDAV_PASSWORD;
 const CF_IMGBED_UPLOAD_URL = cliArgs.CF_IMGBED_UPLOAD_URL || process.env.CF_IMGBED_UPLOAD_URL;
 const CF_IMGBED_API_KEY = cliArgs.CF_IMGBED_API_KEY || process.env.CF_IMGBED_API_KEY;
 
+// --- Default Edit Image Model Configuration ---
+const DEFAULT_EDIT_IMAGE_MODEL = cliArgs.DEFAULT_EDIT_IMAGE_MODEL || process.env.DEFAULT_EDIT_IMAGE_MODEL || 'gpt-image-1'; // Changed default model
+
 
 if (!API_KEY) {
   console.error('Error: API_KEY environment variable or -e API_KEY <value> argument is required');
@@ -73,6 +76,8 @@ const config: AppConfig = {
   // Add Cloudflare ImgBed config to the exported object
   cfImgbedUploadUrl: CF_IMGBED_UPLOAD_URL,
   cfImgbedApiKey: CF_IMGBED_API_KEY,
+  // Add Default Edit Image Model to the exported object
+  defaultEditImageModel: DEFAULT_EDIT_IMAGE_MODEL,
 };
 
 export default config;

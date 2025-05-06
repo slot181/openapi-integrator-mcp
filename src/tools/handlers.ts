@@ -204,6 +204,124 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }: 
         return { content: [{ type: 'text', text: JSON.stringify([{ path: outputPath, webdavUploadStatus: webdavUploadStatus }]) }] };
       }
 
+      case 'edit_image': {
+        // Validate required parameters
+        if (!args || typeof args !== 'object' || !args.image || typeof args.image !== 'string' || !args.prompt || typeof args.prompt !== 'string') {
+          throw new McpError(ErrorCode.InvalidParams, 'Parameters "image" (string) and "prompt" (string) are required for edit_image.');
+        }
+
+        let imagePath = args.image;
+        let cleanupTempFile = false;
+        const tempDir = config.tempDir; // Use configured temp directory
+        await ensureDirectoryExists(tempDir);
+
+        // Handle URL input for image
+        if (isValidHttpUrl(args.image)) {
+          const tempImageFilename = `edit_input_${randomUUID()}${path.extname(new URL(args.image).pathname) || '.png'}`;
+          const tempImagePath = path.join(tempDir, tempImageFilename);
+          try {
+            console.info(`[openapi-integrator-mcp] Downloading image for editing from ${args.image} to ${tempImagePath}`);
+            await downloadFile(args.image, tempImagePath); // downloadFile is already in utils
+            imagePath = tempImagePath;
+            cleanupTempFile = true;
+          } catch (downloadError: any) {
+            throw new McpError(ErrorCode.InternalError, `Failed to download image from URL "${args.image}": ${downloadError.message}`);
+          }
+        } else {
+          // Verify local file exists
+          try {
+            await fs.promises.access(imagePath, fs.constants.R_OK);
+          } catch (accessError) {
+            throw new McpError(ErrorCode.InvalidParams, `Cannot access local image file: ${imagePath}`);
+          }
+        }
+
+        const formData = new FormData();
+        try {
+          const imageBuffer = await fs.promises.readFile(imagePath);
+          formData.append('image', imageBuffer, path.basename(imagePath));
+        } catch (readError: any) {
+          if (cleanupTempFile) {
+            await unlink(imagePath).catch(e => console.error(`[openapi-integrator-mcp] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
+          }
+          throw new McpError(ErrorCode.InternalError, `Failed to read image file "${imagePath}": ${readError.message}`);
+        }
+
+        formData.append('prompt', args.prompt);
+        const modelToUseForEdit = args.model || config.defaultEditImageModel; // Use user's model or default
+        formData.append('model', modelToUseForEdit);
+
+        // Directly append optional parameters if provided by the user/AI
+        if (args.n) formData.append('n', String(args.n));
+        if (args.size) formData.append('size', args.size); // Pass size directly if provided
+
+        // Always request b64_json for processing
+        formData.append('response_format', 'b64_json');
+
+        let editedImageData;
+        try {
+          console.info(`[openapi-integrator-mcp] Sending image edit request with model ${modelToUseForEdit}.`); // Simplified log
+
+          const editResponse = await axiosInstance.post('/v1/images/edits', formData, {
+            headers: formData.getHeaders(),
+          });
+          editedImageData = editResponse.data?.data;
+          if (!editedImageData || !Array.isArray(editedImageData) || editedImageData.length === 0) {
+            throw new McpError(ErrorCode.InternalError, 'API response for image edit did not contain image data.');
+          }
+        } finally {
+          if (cleanupTempFile) {
+            await unlink(imagePath).catch(e => console.error(`[openapi-integrator-mcp] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
+          }
+        }
+
+        const results = [];
+        const imagesOutputDir = path.join(config.audioOutputDir, 'images'); // Consistent with generate_image
+        await ensureDirectoryExists(imagesOutputDir);
+
+        for (const item of editedImageData) {
+          if (!item.b64_json) {
+            console.warn('[openapi-integrator-mcp] API edit response item missing b64_json data.');
+            results.push({ local_path: null, cloudflare_url: null, cloudflareUploadSuccess: false, error: 'Missing image data in API edit response' });
+            continue;
+          }
+
+          const imageBuffer = Buffer.from(item.b64_json, 'base64');
+          let localPath: string | null = null;
+          let cloudflareUrl: string | null = null;
+          let cloudflareUploadSuccess = false;
+          let saveError: string | undefined;
+
+          try {
+            localPath = await saveImageToFile(imageBuffer, imagesOutputDir, 'edited_image');
+          } catch (err: any) {
+            console.error(`[openapi-integrator-mcp] Error saving edited image locally: ${err.message}`);
+            saveError = err.message;
+          }
+
+          if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && localPath) {
+            const filename = path.basename(localPath);
+            cloudflareUrl = await uploadToCfImgbed(imageBuffer, filename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
+            if (cloudflareUrl) {
+              cloudflareUploadSuccess = true;
+            }
+          } else if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && !localPath) {
+            const randomFilename = `edited_image_${randomUUID()}.png`;
+            cloudflareUrl = await uploadToCfImgbed(imageBuffer, randomFilename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
+            if (cloudflareUrl) {
+              cloudflareUploadSuccess = true;
+            }
+          }
+          results.push({
+            local_path: localPath,
+            cloudflare_url: cloudflareUrl,
+            cloudflareUploadSuccess: cloudflareUploadSuccess,
+            error: saveError,
+          });
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+      }
+
       case 'transcribe_audio': {
         if (!isTranscribeAudioArgs(args)) {
           throw new McpError(ErrorCode.InvalidParams, 'Invalid parameters for transcribe_audio');
