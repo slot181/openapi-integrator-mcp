@@ -44,6 +44,8 @@ const ONEBOT_MESSAGE_TYPE = cliArgs.ONEBOT_MESSAGE_TYPE || process.env.ONEBOT_ME
 const ONEBOT_TARGET_ID = cliArgs.ONEBOT_TARGET_ID || process.env.ONEBOT_TARGET_ID; // user_id or group_id
 const TELEGRAM_BOT_TOKEN = cliArgs.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = cliArgs.TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+// --- Image Processing Timeout ---
+const IMAGE_PROCESSING_TIMEOUT = parseInt(cliArgs.IMAGE_PROCESSING_TIMEOUT || process.env.IMAGE_PROCESSING_TIMEOUT || '120000', 10); // Default 120 seconds
 if (!API_KEY) {
     console.error('Error: API_KEY environment variable or -e API_KEY <value> argument is required');
     process.exit(1); // Exit if API key is missing
@@ -89,5 +91,7 @@ const config = {
     onebotTargetId: ONEBOT_TARGET_ID,
     telegramBotToken: TELEGRAM_BOT_TOKEN,
     telegramChatId: TELEGRAM_CHAT_ID,
+    // Add Image Processing Timeout
+    imageProcessingTimeout: IMAGE_PROCESSING_TIMEOUT,
 };
 export default config;

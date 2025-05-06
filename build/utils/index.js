@@ -174,7 +174,7 @@ modelUsed, apiKey, config) {
     const poll = async () => {
         if (Date.now() - startTime > maxTimeout) {
             console.error(`[SiliconFlow] Polling timed out for requestId: ${requestId} after 24 hours.`);
-            const timeoutMsg = `视频生成超时 (ID: ${requestId})\n模型: ${modelUsed}\n提示词: ${prompt}`;
+            const timeoutMsg = `❌ 视频生成超时 (ID: ${requestId})\n模型: ${modelUsed}\n提示词: ${prompt}`;
             await sendOneBotNotification(config, timeoutMsg);
             await sendTelegramNotification(config, timeoutMsg);
             return;
@@ -190,7 +190,7 @@ modelUsed, apiKey, config) {
                 const completionTime = new Date().toISOString();
                 if (!videoUrl) {
                     console.error(`[SiliconFlow] Success status but no video URL found for ${requestId}.`);
-                    const errorMsg = `视频生成失败 (ID: ${requestId})\n模型: ${modelUsed}\n提示词: ${prompt}\n原因: API成功响应但未找到视频URL`;
+                    const errorMsg = `❌ 视频生成失败 (ID: ${requestId})\n模型: ${modelUsed}\n提示词: ${prompt}\n原因: API成功响应但未找到视频URL`;
                     await sendOneBotNotification(config, errorMsg);
                     await sendTelegramNotification(config, errorMsg);
                     return;
@@ -211,13 +211,13 @@ modelUsed, apiKey, config) {
                         const cfVideoUrl = await uploadToCfImgbed(videoBuffer, videoFilename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
                         if (cfVideoUrl) {
                             cfUploadMsg = `\n图床链接: ${cfVideoUrl}`;
-                            const cfNotifyMsg = `视频 ${videoFilename} 已成功上传到图床: ${cfVideoUrl}`;
+                            const cfNotifyMsg = `✅ 视频 ${videoFilename} 已成功上传到图床: ${cfVideoUrl}`;
                             await sendOneBotNotification(config, cfNotifyMsg);
                             await sendTelegramNotification(config, cfNotifyMsg);
                         }
                         else {
                             cfUploadMsg = "\n图床上传失败";
-                            const cfFailMsg = `视频 ${videoFilename} 上传到图床失败。`;
+                            const cfFailMsg = `❌ 视频 ${videoFilename} 上传到图床失败。`;
                             await sendOneBotNotification(config, cfFailMsg);
                             await sendTelegramNotification(config, cfFailMsg);
                         }
@@ -228,7 +228,7 @@ modelUsed, apiKey, config) {
                 }
                 catch (processingError) {
                     console.error(`[SiliconFlow] Error processing video for ${requestId}:`, processingError);
-                    const processErrorMsg = `视频处理失败 (ID: ${requestId})\n模型: ${modelUsed}\n提示词: ${prompt}\n原因: ${processingError.message}`;
+                    const processErrorMsg = `❌ 视频处理失败 (ID: ${requestId})\n模型: ${modelUsed}\n提示词: ${prompt}\n原因: ${processingError.message}`;
                     await sendOneBotNotification(config, processErrorMsg);
                     await sendTelegramNotification(config, processErrorMsg);
                 }
