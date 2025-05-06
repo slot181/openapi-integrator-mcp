@@ -1,7 +1,7 @@
 import axios from 'axios'; // Keep AxiosInstance if needed elsewhere, otherwise just axios
 import * as fs from 'fs';
 import * as path from 'path';
-import { mkdir, writeFile, readFile } from 'fs/promises'; // Add unlink, readFile
+import { mkdir, writeFile, unlink, readFile } from 'fs/promises'; // Add unlink, readFile
 import { randomUUID } from 'crypto';
 import FormData from 'form-data';
 import TelegramBot from 'node-telegram-bot-api'; // Import TelegramBot
@@ -44,6 +44,14 @@ export async function saveImageToFile(imageBuffer, outputDir, prefix) {
     await writeFile(filePath, imageBuffer);
     console.info(`[openapi-integrator-mcp] Image saved locally to: ${filePath}`);
     return filePath;
+}
+// --- Markdown Escaping Helper for Telegram ---
+// Escapes characters for Telegram's legacy Markdown mode.
+// Note: For MarkdownV2, more characters need escaping: '_*[]()~`>#+ -=|{}.!'
+function escapeTelegramMarkdown(text) {
+    if (typeof text !== 'string')
+        return '';
+    return text.replace(/[_*[\]`]/g, '\\$&');
 }
 // --- Cloudflare ImgBed Upload ---
 export async function uploadToCfImgbed(fileBuffer, // Changed name to be more generic
@@ -122,25 +130,53 @@ export async function sendTelegramNotification(config, message) {
     }
     console.log(`[Telegram Notification] Sending notification to Chat ID ${config.telegramChatId}...`);
     try {
-        const bot = new TelegramBot(config.telegramBotToken);
+        const bot = new TelegramBot(config.telegramBotToken, { polling: false }); // Explicitly disable polling
         await bot.sendMessage(config.telegramChatId, message, { parse_mode: 'Markdown' });
         console.log('[Telegram Notification] Notification sent successfully.');
     }
     catch (error) {
-        console.error(`[Telegram Notification] Failed to send notification:`, error.response?.body || error.message || error);
+        console.error(`[Telegram Notification] Failed to send notification to Chat ID ${config.telegramChatId}:`);
+        if (error.code === 'ETELEGRAM' && error.response && error.response.body) {
+            console.error(`Telegram API Error Code: ${error.response.body.error_code}`);
+            console.error(`Description: ${error.response.body.description}`);
+        }
+        else if (error.message) {
+            console.error(`Error: ${error.message}`);
+        }
+        else {
+            console.error(`Unknown error:`, error);
+        }
     }
 }
 /**
  * Sends a notification message for successful image upload to Cloudflare ImgBed.
  */
 export async function sendImageUploadNotification(config, filename, prompt, // Prompt used for generation/edit
-cloudflareUrl) {
-    const message = `🖼️ 图片上传成功!\n文件名: ${filename}\n提示词: ${prompt}\n图床链接: ${cloudflareUrl}`;
-    console.log(`[Notification] Sending image upload success notification for ${filename}`);
+cloudflareUrl, // Can be null if only saved locally
+localPath, // Can be null if even local save failed (though error handled before)
+taskType) {
+    const taskNameChinese = taskType === 'generation' ? '图片生成' : '图片编辑';
+    let userMessage;
+    if (cloudflareUrl) {
+        userMessage = `🖼️ ${taskNameChinese}成功!\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(prompt)}\n图床链接: ${escapeTelegramMarkdown(cloudflareUrl)}`;
+        if (localPath) {
+            userMessage += `\n本地路径: ${escapeTelegramMarkdown(localPath)}`;
+        }
+    }
+    else if (localPath) {
+        // Saved locally, but no Cloudflare URL (either skipped or failed upload)
+        userMessage = `🖼️ ${taskNameChinese}已保存在本地。\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(prompt)}\n本地路径: ${escapeTelegramMarkdown(localPath)}\n(图床上传未执行或失败)`;
+    }
+    else {
+        // This case should ideally be handled before calling this function (e.g. if local save failed)
+        userMessage = `⚠️ ${taskNameChinese}处理状态未知 (${escapeTelegramMarkdown(filename)})。请检查日志。\n提示词: ${escapeTelegramMarkdown(prompt)}`;
+        console.warn(`[Notification] sendImageUploadNotification called with no cloudflareUrl and no localPath for ${filename}. This indicates a prior processing error.`);
+    }
+    console.log(`[Notification] Sending image ${taskType} success notification for ${filename}`); // Internal log in English
     // Send notifications concurrently
     await Promise.all([
-        sendOneBotNotification(config, message),
-        sendTelegramNotification(config, message)
+        sendOneBotNotification(config, userMessage),
+        sendTelegramNotification(config, userMessage)
     ]);
 }
 // Pass the full config object to get the base URL
@@ -257,4 +293,241 @@ modelUsed, apiKey, config) {
     };
     // Start the first poll
     setTimeout(poll, pollInterval);
+}
+// --- Image Processing Background Tasks ---
+async function completeImageProcessingAndNotify(imageBuffer, localPath, filename, originalArgs, // To get the prompt
+config, taskType // To customize messages
+) {
+    let cloudflareUrl = null;
+    // let cloudflareUploadSuccess = false; // Not directly used for return value anymore
+    const taskNameEnglish = taskType === 'generation' ? 'generation' : 'editing'; // For internal logs
+    const taskNameChinese = taskType === 'generation' ? '生成' : '编辑'; // For user-facing messages
+    if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && imageBuffer && localPath) {
+        cloudflareUrl = await uploadToCfImgbed(imageBuffer, filename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
+        if (cloudflareUrl) {
+            // sendImageUploadNotification handles Chinese message construction
+            await sendImageUploadNotification(config, filename, originalArgs.prompt, cloudflareUrl, localPath, taskType);
+        }
+        else {
+            console.error(`[openapi-integrator-mcp BG] Cloudflare upload failed for ${taskNameEnglish} image ${filename}.`); // Internal log in English
+            const userMessage = `🖼️ 图片${taskNameChinese}处理成功，但上传图床失败。\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(originalArgs.prompt)}\n本地路径: ${localPath ? escapeTelegramMarkdown(localPath) : 'N/A'}`;
+            await sendOneBotNotification(config, userMessage);
+            await sendTelegramNotification(config, userMessage);
+        }
+    }
+    else if (config.cfImgbedUploadUrl && config.cfImgbedApiKey) { // CF configured, but upload skipped
+        console.warn(`[openapi-integrator-mcp BG] Skipping Cloudflare upload for ${taskNameEnglish} image ${filename} because local processing failed or buffer/path is missing.`); // Internal log in English
+        if (localPath) {
+            const userMessage = `🖼️ 图片${taskNameChinese}已保存在本地，但因数据问题跳过上传图床。\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(originalArgs.prompt)}\n本地路径: ${escapeTelegramMarkdown(localPath)}`;
+            await sendOneBotNotification(config, userMessage);
+            await sendTelegramNotification(config, userMessage);
+        }
+    }
+    else if (localPath) { // No Cloudflare config, but saved locally
+        // sendImageUploadNotification handles Chinese message for local-only success
+        await sendImageUploadNotification(config, filename, originalArgs.prompt, null, localPath, taskType);
+    }
+    // If localPath is null (initial save/download failed), an error notification should have been sent by the caller
+}
+export async function processImageGenerationInBackground(args, config, axiosInstance) {
+    const modelToUse = args.model || config.defaultImageModel;
+    let requestBody = { prompt: args.prompt, model: modelToUse };
+    const isDallE3OrGptImage1 = modelToUse.includes('dall-e-3') || modelToUse.includes('gpt-image-1');
+    if (isDallE3OrGptImage1) {
+        if (args.n)
+            requestBody.n = args.n;
+        if (args.quality)
+            requestBody.quality = args.quality;
+        if (args.size)
+            requestBody.size = args.size;
+        if (args.background)
+            requestBody.background = args.background;
+        if (args.moderation)
+            requestBody.moderation = args.moderation;
+    }
+    else {
+        requestBody = {
+            ...requestBody, ...config.defaultImageConfig,
+            ...(args.width && { width: args.width }),
+            ...(args.height && { height: args.height }),
+            ...(args.steps && { steps: args.steps }),
+            ...(args.n && { n: args.n }),
+            response_format: "url",
+        };
+        delete requestBody.size;
+        delete requestBody.quality;
+        delete requestBody.background;
+        delete requestBody.moderation;
+    }
+    console.log('[openapi-integrator-mcp BG] Image generation request body:', JSON.stringify(requestBody, null, 2));
+    let responseData;
+    try {
+        const response = await axiosInstance.post('/v1/images/generations', requestBody, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: config.requestTimeout, // Use the general request timeout for the API call itself
+        });
+        responseData = response.data?.data;
+        if (!responseData || !Array.isArray(responseData) || responseData.length === 0) {
+            throw new Error('API response did not contain image data.'); // Internal error in English
+        }
+    }
+    catch (apiError) {
+        console.error('[openapi-integrator-mcp BG] Image generation API call failed:', apiError.message); // Internal log in English
+        const userMessage = `❌ 图片生成失败 (API请求错误): ${escapeTelegramMarkdown(apiError.message)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+        await sendOneBotNotification(config, userMessage);
+        await sendTelegramNotification(config, userMessage);
+        return;
+    }
+    const imagesOutputDir = path.join(config.audioOutputDir, 'images');
+    await ensureDirectoryExists(imagesOutputDir);
+    for (const item of responseData) {
+        let imageBuffer = null;
+        let localPath = null;
+        const filenamePrefix = 'generated_image';
+        let filename = `${filenamePrefix}_${randomUUID()}.png`;
+        // let processingError: Error | null = null; // Not used directly for notification here
+        try {
+            if (item.b64_json) {
+                imageBuffer = Buffer.from(item.b64_json, 'base64');
+                localPath = path.join(imagesOutputDir, filename);
+                await fs.promises.writeFile(localPath, imageBuffer);
+                console.info(`[openapi-integrator-mcp BG] Image saved locally from b64_json to: ${localPath}`);
+            }
+            else if (item.url && isValidHttpUrl(item.url)) {
+                const imageUrl = item.url;
+                const urlPath = new URL(imageUrl).pathname;
+                const ext = path.extname(urlPath) || '.png';
+                filename = `${filenamePrefix}_${randomUUID()}${ext}`;
+                localPath = path.join(imagesOutputDir, filename);
+                console.log(`[openapi-integrator-mcp BG] Downloading image from ${imageUrl} to ${localPath}`);
+                await downloadFile(imageUrl, localPath);
+                console.log(`[openapi-integrator-mcp BG] Image downloaded: ${localPath}`);
+                imageBuffer = await fs.promises.readFile(localPath);
+            }
+            else {
+                throw new Error('API response item missing b64_json or valid url data.');
+            }
+        }
+        catch (err) {
+            console.error(`[openapi-integrator-mcp BG] Error processing image (save/download/read): ${err.message}`);
+            // processingError = err; // Not used directly for notification here
+            imageBuffer = null; // Ensure buffer is null on error
+            localPath = null; // Ensure path is null on error
+            const userMessage = `❌ 图片处理失败 (保存/下载错误): ${escapeTelegramMarkdown(err.message)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+            await sendOneBotNotification(config, userMessage);
+            await sendTelegramNotification(config, userMessage);
+            // Continue to next item if one fails
+            continue;
+        }
+        // If no processing error, proceed to complete and notify
+        await completeImageProcessingAndNotify(imageBuffer, localPath, filename, args, config, 'generation');
+    }
+}
+export async function processImageEditInBackground(args, config, axiosInstance) {
+    let imagePath = args.image;
+    let cleanupTempFile = false;
+    const tempDir = config.tempDir;
+    await ensureDirectoryExists(tempDir);
+    let originalImageFilename = path.basename(imagePath); // For notification
+    try {
+        if (isValidHttpUrl(args.image)) {
+            const tempImageFilename = `edit_input_${randomUUID()}${path.extname(new URL(args.image).pathname) || '.png'}`;
+            originalImageFilename = tempImageFilename; // Update for notification
+            const tempImagePath = path.join(tempDir, tempImageFilename);
+            console.info(`[openapi-integrator-mcp BG] Downloading image for editing from ${args.image} to ${tempImagePath}`); // Log in English
+            await downloadFile(args.image, tempImagePath);
+            imagePath = tempImagePath;
+            cleanupTempFile = true;
+        }
+        else {
+            await fs.promises.access(imagePath, fs.constants.R_OK);
+        }
+    }
+    catch (accessOrDownloadError) {
+        console.error('[openapi-integrator-mcp BG] Failed to access/download image for editing:', accessOrDownloadError.message); // Log in English
+        const userMessage = `❌ 图片编辑预处理失败 (无法访问/下载原图): ${escapeTelegramMarkdown(accessOrDownloadError.message)}\n原图: ${escapeTelegramMarkdown(args.image)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+        await sendOneBotNotification(config, userMessage);
+        await sendTelegramNotification(config, userMessage);
+        if (cleanupTempFile && fs.existsSync(imagePath))
+            await unlink(imagePath).catch(e => console.error(`[BG] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
+        return;
+    }
+    const formData = new FormData();
+    try {
+        const imageBuffer = await fs.promises.readFile(imagePath);
+        formData.append('image', imageBuffer, path.basename(imagePath));
+    }
+    catch (readError) {
+        console.error('[openapi-integrator-mcp BG] Failed to read image for editing:', readError.message); // Log in English
+        const userMessage = `❌ 图片编辑预处理失败 (无法读取原图): ${escapeTelegramMarkdown(readError.message)}\n原图: ${escapeTelegramMarkdown(args.image)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+        await sendOneBotNotification(config, userMessage);
+        await sendTelegramNotification(config, userMessage);
+        if (cleanupTempFile)
+            await unlink(imagePath).catch(e => console.error(`[BG] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
+        return;
+    }
+    formData.append('prompt', args.prompt);
+    const modelToUseForEdit = args.model || config.defaultEditImageModel;
+    formData.append('model', modelToUseForEdit);
+    if (args.n)
+        formData.append('n', String(args.n));
+    if (args.size)
+        formData.append('size', args.size);
+    formData.append('response_format', 'b64_json');
+    let editedImageData;
+    try {
+        console.info(`[openapi-integrator-mcp BG] Sending image edit request with model ${modelToUseForEdit}.`);
+        const editResponse = await axiosInstance.post('/v1/images/edits', formData, {
+            headers: formData.getHeaders(),
+            timeout: config.requestTimeout, // Use general request timeout
+        });
+        editedImageData = editResponse.data?.data;
+        if (!editedImageData || !Array.isArray(editedImageData) || editedImageData.length === 0) {
+            throw new Error('API response for image edit did not contain image data.'); // Internal error in English
+        }
+    }
+    catch (apiError) {
+        console.error('[openapi-integrator-mcp BG] Image edit API call failed:', apiError.message); // Log in English
+        const userMessage = `❌ 图片编辑失败 (API请求错误): ${escapeTelegramMarkdown(apiError.message)}\n原图: ${escapeTelegramMarkdown(originalImageFilename)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+        await sendOneBotNotification(config, userMessage);
+        await sendTelegramNotification(config, userMessage);
+        if (cleanupTempFile)
+            await unlink(imagePath).catch(e => console.error(`[BG] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
+        return;
+    }
+    finally {
+        if (cleanupTempFile)
+            await unlink(imagePath).catch(e => console.error(`[BG] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
+    }
+    const imagesOutputDir = path.join(config.audioOutputDir, 'images');
+    await ensureDirectoryExists(imagesOutputDir);
+    for (const item of editedImageData) {
+        if (!item.b64_json) {
+            console.warn('[openapi-integrator-mcp BG] API edit response item missing b64_json data.'); // Log in English
+            const userMessage = `❌ 图片编辑部分失败 (API响应缺少图像数据)\n原图: ${escapeTelegramMarkdown(originalImageFilename)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+            await sendOneBotNotification(config, userMessage);
+            await sendTelegramNotification(config, userMessage);
+            continue;
+        }
+        const imageBuffer = Buffer.from(item.b64_json, 'base64');
+        let localPath = null;
+        const filenamePrefix = 'edited_image';
+        const filename = `${filenamePrefix}_${randomUUID()}.png`;
+        // let processingError: Error | null = null; // Not used directly for notification here
+        try {
+            localPath = path.join(imagesOutputDir, filename);
+            await fs.promises.writeFile(localPath, imageBuffer);
+            console.info(`[openapi-integrator-mcp BG] Edited image saved locally to: ${localPath}`);
+        }
+        catch (err) {
+            console.error(`[openapi-integrator-mcp BG] Error saving edited image locally: ${err.message}`);
+            // processingError = err; // Not used directly for notification here
+            localPath = null; // Ensure path is null on error
+            const userMessage = `❌ 图片编辑部分失败 (保存错误): ${escapeTelegramMarkdown(err.message)}\n原图: ${escapeTelegramMarkdown(originalImageFilename)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+            await sendOneBotNotification(config, userMessage);
+            await sendTelegramNotification(config, userMessage);
+            continue;
+        }
+        await completeImageProcessingAndNotify(imageBuffer, localPath, filename, args, config, 'edit');
+    }
 }

@@ -11,10 +11,12 @@ import {
   ensureDirectoryExists,
   isValidHttpUrl,
   downloadFile,
-  saveImageToFile,
-  uploadToCfImgbed,
+  // saveImageToFile, // Now part of background processing
+  uploadToCfImgbed, // Still needed by background processing, but not directly here
   handleSiliconFlowVideoGeneration,
-  sendImageUploadNotification,
+  sendImageUploadNotification, // Still needed by background processing
+  processImageGenerationInBackground, // New import
+  processImageEditInBackground, // New import
   // Removed imports for background image handlers as they are no longer used
 } from '../utils/index.js';
 
@@ -78,111 +80,103 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }: 
           delete requestBody.moderation;
         }
 
-        const startTime = Date.now(); // Record start time
-        console.log('[openapi-integrator-mcp] Image generation request body:', JSON.stringify(requestBody, null, 2));
+        const modelToUseForGen = args.model || config.defaultImageModel;
+        const isSpecialModelGen = modelToUseForGen.includes('dall-e-3') || modelToUseForGen.includes('gpt-image-1');
 
-        // Set Content-Type specifically for this request
-        const response = await axiosInstance.post('/v1/images/generations', requestBody, {
-          headers: { 'Content-Type': 'application/json' }
-          // Note: We use the global axiosInstance timeout here.
-          // If API call itself times out, it will throw an error handled by the main catch block.
-        });
+        if (isSpecialModelGen) {
+            console.log(`[openapi-integrator-mcp] Model ${modelToUseForGen} is special. Starting background processing for generate_image.`);
+            processImageGenerationInBackground(args, config, axiosInstance)
+                .catch(bgError => {
+                    console.error('[openapi-integrator-mcp] Critical unhandled error in processImageGenerationInBackground:', bgError);
+                });
+            return {
+                content: [{
+                    type: 'text',
+                    text: JSON.stringify({
+                        status: 'processing_in_background',
+                        message: 'Image generation task for special model submitted. You will be notified upon completion.'
+                    })
+                }]
+            };
+        } else {
+            // Synchronous processing for other models
+            console.log(`[openapi-integrator-mcp] Model ${modelToUseForGen} is not special. Processing generate_image synchronously.`);
+            const { model: _, ...restOfDefaultConfig } = config.defaultImageConfig; // Exclude model from default config spread
+            const imageGenRequestBody: any = {
+                prompt: args.prompt,
+                ...restOfDefaultConfig, // Spread defaults without model property
+                model: modelToUseForGen, // Explicitly set the determined model
+                ...(args.width && { width: args.width }),
+                ...(args.height && { height: args.height }),
+                ...(args.steps && { steps: args.steps }),
+                ...(args.n && { n: args.n }),
+                response_format: "url", // Request URL for other models
+            };
+            // Remove dall-e-3/gpt-image-1 specific params if they were somehow passed
+            delete imageGenRequestBody.size;
+            delete imageGenRequestBody.quality;
+            delete imageGenRequestBody.background;
+            delete imageGenRequestBody.moderation;
 
-        const responseData = response.data?.data;
-        if (!responseData || !Array.isArray(responseData) || responseData.length === 0) {
-          throw new McpError(ErrorCode.InternalError, 'API response did not contain image data.');
-        }
+            console.log('[openapi-integrator-mcp SYNC] Image generation request body:', JSON.stringify(imageGenRequestBody, null, 2));
+            const response = await axiosInstance.post('/v1/images/generations', imageGenRequestBody, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: config.requestTimeout,
+            });
 
-        // --- Start Synchronous Processing ---
-        const results = [];
-        const imagesOutputDir = path.join(config.audioOutputDir, 'images');
-        await ensureDirectoryExists(imagesOutputDir);
+            const responseData = response.data?.data;
+            if (!responseData || !Array.isArray(responseData) || responseData.length === 0) {
+                throw new McpError(ErrorCode.InternalError, 'API response did not contain image data.');
+            }
 
-        for (const item of responseData) {
-           // Check for overall timeout before processing each item heavily
-           if (Date.now() - startTime > config.imageProcessingTimeout) {
-                console.warn(`[openapi-integrator-mcp] Image processing timeout reached during result iteration.`);
-                 throw new McpError(
-                    ErrorCode.InternalError, // Or a custom code? -32001?
-                    `Image processing timed out after ${config.imageProcessingTimeout / 1000} seconds. Task continues in background via notifications (if configured).`,
-                    { partialResults: results } // Optionally include partial results if needed
-                 );
-           }
+            const results = [];
+            const imagesOutputDir = path.join(config.audioOutputDir, 'images');
+            await ensureDirectoryExists(imagesOutputDir);
 
-           let imageBuffer: Buffer | null = null;
-           let localPath: string | null = null;
-           let cloudflareUrl: string | null = null;
-           let cloudflareUploadSuccess = false;
-           let saveError: string | undefined;
-           const filenamePrefix = 'generated_image';
-           let filename = `${filenamePrefix}_${randomUUID()}.png`;
+            for (const item of responseData) {
+                let imageBuffer: Buffer | null = null;
+                let localPath: string | null = null;
+                let cloudflareUrl: string | null = null;
+                let cloudflareUploadSuccess = false;
+                let saveError: string | undefined;
+                const filenamePrefix = 'generated_image_sync';
+                let filename = `${filenamePrefix}_${randomUUID()}.png`;
 
-           try {
-                if (item.b64_json) {
-                    imageBuffer = Buffer.from(item.b64_json, 'base64');
-                    localPath = path.join(imagesOutputDir, filename);
-                    await fs.promises.writeFile(localPath, imageBuffer);
-                    console.info(`[openapi-integrator-mcp] Image saved locally from b64_json to: ${localPath}`);
-                } else if (item.url && isValidHttpUrl(item.url)) {
-                    const imageUrl = item.url;
-                    const urlPath = new URL(imageUrl).pathname;
-                    const ext = path.extname(urlPath) || '.png';
-                    filename = `${filenamePrefix}_${randomUUID()}${ext}`;
-                    localPath = path.join(imagesOutputDir, filename);
-                    console.log(`[openapi-integrator-mcp] Downloading image from ${imageUrl} to ${localPath}`);
-                    await downloadFile(imageUrl, localPath); // This might take time
-                    console.log(`[openapi-integrator-mcp] Image downloaded: ${localPath}`);
-                    imageBuffer = await fs.promises.readFile(localPath);
-                } else {
-                    console.warn('[openapi-integrator-mcp] API response item missing b64_json or valid url data.');
-                    saveError = 'Missing image data (b64_json or url) in API response';
+                try {
+                    if (item.url && isValidHttpUrl(item.url)) { // Non-special models return URL
+                        const imageUrl = item.url;
+                        const urlPath = new URL(imageUrl).pathname;
+                        const ext = path.extname(urlPath) || '.png';
+                        filename = `${filenamePrefix}_${randomUUID()}${ext}`;
+                        localPath = path.join(imagesOutputDir, filename);
+                        await downloadFile(imageUrl, localPath);
+                        imageBuffer = await fs.promises.readFile(localPath);
+                    } else if (item.b64_json) { // Fallback if API behaves unexpectedly
+                         imageBuffer = Buffer.from(item.b64_json, 'base64');
+                         localPath = path.join(imagesOutputDir, filename);
+                         await fs.promises.writeFile(localPath, imageBuffer);
+                    } else {
+                        saveError = 'Missing image data (url or b64_json) in API response';
+                    }
+                } catch (err: any) {
+                    console.error(`[openapi-integrator-mcp SYNC] Error processing image: ${err.message}`);
+                    saveError = `Error processing image: ${err.message}`;
                 }
-           } catch (err: any) {
-                console.error(`[openapi-integrator-mcp] Error processing image (save/download/read): ${err.message}`);
-                saveError = `Error processing image: ${err.message}`;
-                imageBuffer = null;
-                localPath = null;
-           }
 
-           // Check for timeout again after potentially long download/save
-           if (Date.now() - startTime > config.imageProcessingTimeout) {
-                throw new McpError(ErrorCode.InternalError, `Image processing timed out after ${config.imageProcessingTimeout / 1000} seconds during save/upload phase. Task continues in background via notifications (if configured).`);
-           }
-
-           // --- Cloudflare Upload ---
-           if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && imageBuffer && localPath) {
-                cloudflareUrl = await uploadToCfImgbed(imageBuffer, filename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
-                if (cloudflareUrl) {
-                    cloudflareUploadSuccess = true;
-                    // Send notification immediately after successful upload
-                    // Use await here as notification is part of the successful synchronous flow
-                    await sendImageUploadNotification(config, filename, args.prompt, cloudflareUrl);
-                } else {
-                    console.error(`[openapi-integrator-mcp] Cloudflare upload failed for ${filename}.`);
-                    // Do not send notification on failure
+                if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && imageBuffer && localPath) {
+                    cloudflareUrl = await uploadToCfImgbed(imageBuffer, filename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
+                    if (cloudflareUrl) {
+                        cloudflareUploadSuccess = true;
+                        // For sync, notification is optional or could be part of a different flow if desired.
+                        // Here, we assume direct response is primary, notification is secondary.
+                        // You might choose to send notifications even for sync tasks if that's the requirement.
+                        // await sendImageUploadNotification(config, filename, args.prompt, cloudflareUrl, localPath, 'generation');
+                    }
                 }
-           } else if (config.cfImgbedUploadUrl && config.cfImgbedApiKey) {
-                console.warn(`[openapi-integrator-mcp] Skipping upload for ${filename} because local processing failed or buffer is missing.`);
-           }
-
-           results.push({
-                local_path: localPath,
-                cloudflare_url: cloudflareUrl,
-                cloudflareUploadSuccess: cloudflareUploadSuccess,
-                error: saveError
-           });
-        } // End for loop
-
-        // Final timeout check after loop completes
-        const endTime = Date.now();
-        if (endTime - startTime > config.imageProcessingTimeout) {
-             console.warn(`[openapi-integrator-mcp] Image generation completed, but exceeded timeout (${(endTime - startTime) / 1000}s > ${config.imageProcessingTimeout / 1000}s). Returning results normally.`);
-             // Optionally add a warning to the result?
-             // results.forEach(r => r.warning = `Processing exceeded timeout of ${config.imageProcessingTimeout / 1000}s`);
+                results.push({ local_path: localPath, cloudflare_url: cloudflareUrl, cloudflareUploadSuccess, error: saveError });
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(results) }] };
         }
-
-        // Return final results if no timeout error was thrown earlier
-        return { content: [{ type: 'text', text: JSON.stringify(results) }] };
       }
 
       case 'generate_speech': {
@@ -261,147 +255,122 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }: 
       }
 
       case 'edit_image': {
-        const startTime = Date.now(); // Record start time for timeout check
-        // Validate required parameters
         if (!args || typeof args !== 'object' || !args.image || typeof args.image !== 'string' || !args.prompt || typeof args.prompt !== 'string') {
           throw new McpError(ErrorCode.InvalidParams, 'Parameters "image" (string) and "prompt" (string) are required for edit_image.');
         }
 
-        let imagePath = args.image;
-        let cleanupTempFile = false;
-        const tempDir = config.tempDir; // Use configured temp directory
-        await ensureDirectoryExists(tempDir);
+        const modelToUseForEdit = args.model || config.defaultEditImageModel;
+        const isSpecialModelEdit = modelToUseForEdit.includes('dall-e-3') || modelToUseForEdit.includes('gpt-image-1'); // Assuming same models for edit
 
-        // Handle URL input for image
-        if (isValidHttpUrl(args.image)) {
-          const tempImageFilename = `edit_input_${randomUUID()}${path.extname(new URL(args.image).pathname) || '.png'}`;
-          const tempImagePath = path.join(tempDir, tempImageFilename);
-          try {
-            console.info(`[openapi-integrator-mcp] Downloading image for editing from ${args.image} to ${tempImagePath}`);
-            await downloadFile(args.image, tempImagePath); // downloadFile is already in utils
-            imagePath = tempImagePath;
-            cleanupTempFile = true;
-          } catch (downloadError: any) {
-            throw new McpError(ErrorCode.InternalError, `Failed to download image from URL "${args.image}": ${downloadError.message}`);
-          }
+        if (isSpecialModelEdit) {
+            console.log(`[openapi-integrator-mcp] Model ${modelToUseForEdit} is special. Starting background processing for edit_image.`);
+            processImageEditInBackground(args, config, axiosInstance)
+                .catch(bgError => {
+                    console.error('[openapi-integrator-mcp] Critical unhandled error in processImageEditInBackground:', bgError);
+                });
+            return {
+                content: [{
+                    type: 'text',
+                    text: JSON.stringify({
+                        status: 'processing_in_background',
+                        message: 'Image editing task for special model submitted. You will be notified upon completion.'
+                    })
+                }]
+            };
         } else {
-          // Verify local file exists
-          try {
-            await fs.promises.access(imagePath, fs.constants.R_OK);
-          } catch (accessError) {
-            throw new McpError(ErrorCode.InvalidParams, `Cannot access local image file: ${imagePath}`);
-          }
-        }
+            // Synchronous processing for other edit models (if any, current default is gpt-image-1 which is special)
+            // This path might be less common if defaultEditImageModel is always a "special" one.
+            console.log(`[openapi-integrator-mcp] Model ${modelToUseForEdit} is not special. Processing edit_image synchronously.`);
+            
+            let imagePath = args.image;
+            let cleanupTempFile = false;
+            const tempDir = config.tempDir;
+            await ensureDirectoryExists(tempDir);
 
-        const formData = new FormData();
-        try {
-          const imageBuffer = await fs.promises.readFile(imagePath);
-          formData.append('image', imageBuffer, path.basename(imagePath));
-        } catch (readError: any) {
-          if (cleanupTempFile) {
-            await unlink(imagePath).catch(e => console.error(`[openapi-integrator-mcp] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
-          }
-          throw new McpError(ErrorCode.InternalError, `Failed to read image file "${imagePath}": ${readError.message}`);
-        }
-
-        formData.append('prompt', args.prompt);
-        const modelToUseForEdit = args.model || config.defaultEditImageModel; // Use user's model or default
-        formData.append('model', modelToUseForEdit);
-
-        // Directly append optional parameters if provided by the user/AI
-        if (args.n) formData.append('n', String(args.n));
-        if (args.size) formData.append('size', args.size); // Pass size directly if provided
-
-        // Always request b64_json for processing
-        formData.append('response_format', 'b64_json');
-
-        let editedImageData;
-        try {
-          console.info(`[openapi-integrator-mcp] Sending image edit request with model ${modelToUseForEdit}.`); // Simplified log
-
-          const editResponse = await axiosInstance.post('/v1/images/edits', formData, {
-            headers: formData.getHeaders(),
-          });
-          editedImageData = editResponse.data?.data;
-          if (!editedImageData || !Array.isArray(editedImageData) || editedImageData.length === 0) {
-            throw new McpError(ErrorCode.InternalError, 'API response for image edit did not contain image data.');
-          }
-        } finally {
-          if (cleanupTempFile) {
-            await unlink(imagePath).catch(e => console.error(`[openapi-integrator-mcp] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
-          }
-        }
-
-        // --- Start Synchronous Processing ---
-        const results = [];
-        const imagesOutputDir = path.join(config.audioOutputDir, 'images');
-        await ensureDirectoryExists(imagesOutputDir);
-
-        for (const item of editedImageData) {
-            // Check for overall timeout before processing each item heavily
-            if (Date.now() - startTime > config.imageProcessingTimeout) {
-                 throw new McpError(ErrorCode.InternalError, `Image editing processing timed out after ${config.imageProcessingTimeout / 1000} seconds. Task continues in background via notifications (if configured).`);
-            }
-
-            if (!item.b64_json) {
-                console.warn('[openapi-integrator-mcp] API edit response item missing b64_json data.');
-                results.push({ local_path: null, cloudflare_url: null, cloudflareUploadSuccess: false, error: 'Missing image data in API edit response' });
-                continue;
-            }
-
-            const imageBuffer = Buffer.from(item.b64_json, 'base64');
-            let localPath: string | null = null;
-            let cloudflareUrl: string | null = null;
-            let cloudflareUploadSuccess = false;
-            let saveError: string | undefined;
-            const filenamePrefix = 'edited_image';
-            const filename = `${filenamePrefix}_${randomUUID()}.png`;
-
-            try {
-                localPath = path.join(imagesOutputDir, filename);
-                await fs.promises.writeFile(localPath, imageBuffer);
-                console.info(`[openapi-integrator-mcp] Edited image saved locally to: ${localPath}`);
-            } catch (err: any) {
-                console.error(`[openapi-integrator-mcp] Error saving edited image locally: ${err.message}`);
-                saveError = err.message;
-                localPath = null; // Ensure path is null on error
-            }
-
-             // Check for timeout again after potentially long save
-            if (Date.now() - startTime > config.imageProcessingTimeout) {
-                 throw new McpError(ErrorCode.InternalError, `Image editing processing timed out after ${config.imageProcessingTimeout / 1000} seconds during save/upload phase. Task continues in background via notifications (if configured).`);
-            }
-
-            // --- Cloudflare Upload ---
-            if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && imageBuffer && localPath) {
-                cloudflareUrl = await uploadToCfImgbed(imageBuffer, filename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
-                if (cloudflareUrl) {
-                    cloudflareUploadSuccess = true;
-                    // Send notification immediately
-                    await sendImageUploadNotification(config, filename, args.prompt, cloudflareUrl);
-                } else {
-                     console.error(`[openapi-integrator-mcp] Cloudflare upload failed for edited image ${filename}.`);
+            if (isValidHttpUrl(args.image)) {
+                const tempImageFilename = `edit_input_sync_${randomUUID()}${path.extname(new URL(args.image).pathname) || '.png'}`;
+                const tempImagePath = path.join(tempDir, tempImageFilename);
+                try {
+                    await downloadFile(args.image, tempImagePath);
+                    imagePath = tempImagePath;
+                    cleanupTempFile = true;
+                } catch (downloadError: any) {
+                    throw new McpError(ErrorCode.InternalError, `Failed to download image for editing: ${downloadError.message}`);
                 }
-            } else if (config.cfImgbedUploadUrl && config.cfImgbedApiKey) {
-                 console.warn(`[openapi-integrator-mcp] Skipping upload for edited image ${filename} because local save failed or buffer is missing.`);
+            } else {
+                 try { await fs.promises.access(imagePath, fs.constants.R_OK); }
+                 catch (accessError) { throw new McpError(ErrorCode.InvalidParams, `Cannot access local image file for editing: ${imagePath}`); }
             }
 
-            results.push({
-                local_path: localPath,
-                cloudflare_url: cloudflareUrl,
-                cloudflareUploadSuccess: cloudflareUploadSuccess,
-                error: saveError,
-            });
-        } // End for loop
+            const formData = new FormData();
+            try {
+                const imageBuffer = await fs.promises.readFile(imagePath);
+                formData.append('image', imageBuffer, path.basename(imagePath));
+            } catch (readError: any) {
+                if (cleanupTempFile) await unlink(imagePath).catch(console.error);
+                throw new McpError(ErrorCode.InternalError, `Failed to read image file for editing: ${readError.message}`);
+            }
+            
+            formData.append('prompt', args.prompt);
+            formData.append('model', modelToUseForEdit); // This model is NOT dall-e-3 or gpt-image-1 here
+            if (args.n) formData.append('n', String(args.n));
+            // For non-dall-e-3/gpt-image-1 edit models, 'size' might behave differently or not be supported.
+            // OpenAI's standard edit endpoint (not DALL-E 2 via images/edits) primarily uses 'b64_json' or 'url' for response_format.
+            // Assuming 'b64_json' for consistency if this path were to be used by a non-special model.
+            formData.append('response_format', 'b64_json');
+            if (args.size) formData.append('size', args.size);
 
-         // Final timeout check after loop completes
-        const endTime = Date.now();
-        if (endTime - startTime > config.imageProcessingTimeout) {
-             console.warn(`[openapi-integrator-mcp] Image editing completed, but exceeded timeout (${(endTime - startTime) / 1000}s > ${config.imageProcessingTimeout / 1000}s). Returning results normally.`);
+
+            let editedImageData;
+            try {
+                const editResponse = await axiosInstance.post('/v1/images/edits', formData, {
+                    headers: formData.getHeaders(),
+                    timeout: config.requestTimeout,
+                });
+                editedImageData = editResponse.data?.data;
+                if (!editedImageData || !Array.isArray(editedImageData) || editedImageData.length === 0) {
+                    throw new McpError(ErrorCode.InternalError, 'API response for image edit did not contain image data.');
+                }
+            } finally {
+                if (cleanupTempFile) await unlink(imagePath).catch(console.error);
+            }
+
+            const results = [];
+            const imagesOutputDir = path.join(config.audioOutputDir, 'images');
+            await ensureDirectoryExists(imagesOutputDir);
+
+            for (const item of editedImageData) {
+                let imageBuffer: Buffer | null = null;
+                let localPath: string | null = null;
+                let cloudflareUrl: string | null = null;
+                let cloudflareUploadSuccess = false;
+                let saveError: string | undefined;
+                const filenamePrefix = 'edited_image_sync';
+                const filename = `${filenamePrefix}_${randomUUID()}.png`;
+
+                try {
+                    if (item.b64_json) {
+                        imageBuffer = Buffer.from(item.b64_json, 'base64');
+                        localPath = path.join(imagesOutputDir, filename);
+                        await fs.promises.writeFile(localPath, imageBuffer);
+                    } else {
+                         saveError = 'Missing b64_json in API edit response for sync model';
+                    }
+                } catch (err: any) {
+                    console.error(`[openapi-integrator-mcp SYNC] Error saving edited image: ${err.message}`);
+                    saveError = `Error saving edited image: ${err.message}`;
+                }
+
+                if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && imageBuffer && localPath) {
+                    cloudflareUrl = await uploadToCfImgbed(imageBuffer, filename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
+                     if (cloudflareUrl) cloudflareUploadSuccess = true;
+                    // Optional: send notification for sync tasks too
+                    // await sendImageUploadNotification(config, filename, args.prompt, cloudflareUrl, localPath, 'edit');
+                }
+                results.push({ local_path: localPath, cloudflare_url: cloudflareUrl, cloudflareUploadSuccess, error: saveError });
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(results) }] };
         }
-
-        // Return final results if no timeout error was thrown earlier
-        return { content: [{ type: 'text', text: JSON.stringify(results) }] };
       }
 
       case 'generate_video': {

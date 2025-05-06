@@ -31,7 +31,7 @@ class OpenAIIntegrationServer {
         // Create MCP Server instance
         this.server = new Server({
             name: 'openapi-integrator-mcp',
-            version: '2.1.3', // Consider making version dynamic or part of config
+            version: '2.1.4', // Consider making version dynamic or part of config
         }, {
             capabilities: {
                 tools: {}, // Capabilities might be dynamically determined or empty initially

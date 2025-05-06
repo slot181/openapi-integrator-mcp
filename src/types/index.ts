@@ -74,6 +74,4 @@ export interface AppConfig {
   onebotTargetId?: string;
   telegramBotToken?: string;
   telegramChatId?: string;
-  // Image Processing Timeout
-  imageProcessingTimeout: number;
 }
