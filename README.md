@@ -1,4 +1,4 @@
-# OpenAI / SiliconFlow API MCP Server (English)
+# OpenAI Compatible API MCP Server (English)
 
 This project is a Model Context Protocol (MCP) server that integrates various tools based on OpenAI compatible APIs and SiliconFlow APIs. It offers a range of functionalities including image generation, image editing, speech synthesis (TTS), speech-to-text (STT), and video generation.
 
@@ -10,7 +10,7 @@ This project is a Model Context Protocol (MCP) server that integrates various to
 -   **Speech-to-Text (STT)**: Transcribe audio files into text using OpenAI compatible APIs.
 -   **Video Generation**: Submit text-to-video or image-to-video generation tasks using the SiliconFlow API.
 -   **Background Task Processing**: For time-consuming tasks (like image generation/editing with specific models, video generation), the server accepts the task and processes it asynchronously. Notifications are sent via configured channels (OneBot or Telegram) upon completion or failure.
--   **File Upload**: Supports uploading generated images and videos to a configured Cloudflare R2 ImgBed.
+-   **File Upload**: Supports uploading generated images and videos to a configured Cloudflare ImgBed.
 -   **Local Storage**: All generated media files are saved locally.
 
 ## Prerequisites
@@ -45,8 +45,7 @@ Configure environment variables via a `.env` file in the project root. If the `.
 
 -   `OPENAI_API_KEY`: (Required) Your OpenAI API key or a compatible API key.
 -   `OPENAI_API_BASE_URL`: (Optional) Base URL for the OpenAI compatible API. Defaults to `https://api.openai.com`.
--   `REQUEST_TIMEOUT`: (Optional) API request timeout in milliseconds. Defaults to `600000` (10 minutes).
--   `TEMP_DIR`: (Optional) Directory for storing temporary files. Defaults to `./temp_files`.
+-   `REQUEST_TIMEOUT`: (Optional) API request timeout in milliseconds. Defaults to `180000` (3 minutes).
 -   `OUTPUT_DIR`: (Optional) Base output directory for generated media files. Defaults to `./output`. Subdirectories like `images`, `audio`, `video` will be created here.
 
 **Default Model Configuration for Image Generation/Editing:**

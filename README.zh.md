@@ -1,4 +1,4 @@
-# OpenAI / SiliconFlow API MCP 服务器
+# OpenAI Compatible API MCP 服务器
 
 本项目是一个 Model Context Protocol (MCP) 服务器，集成了多种基于 OpenAI 兼容 API 和 SiliconFlow API 的工具，提供包括图片生成、图片编辑、语音合成、语音转录和视频生成在内的多种功能。
 
@@ -10,7 +10,7 @@
 -   **语音转录 (STT)**: 使用 OpenAI 兼容 API 将音频文件转录为文本。
 -   **视频生成**: 使用 SiliconFlow API 提交文本到视频或图片到视频的生成任务。
 -   **后台任务处理**: 对于耗时较长的任务（如特定模型的图片生成/编辑、视频生成），服务器会接受任务并异步处理，通过配置的通知方式（OneBot 或 Telegram）在任务完成或失败时发送通知。
--   **文件上传**: 支持将生成的图片和视频上传到配置的 Cloudflare R2 ImgBed 图床。
+-   **文件上传**: 支持将生成的图片和视频上传到配置的 Cloudflare ImgBed 图床。
 -   **本地保存**: 所有生成的媒体文件都会保存在本地。
 
 ## 前提条件
@@ -45,8 +45,7 @@
 
 -   `OPENAI_API_KEY`: (必需) 你的 OpenAI API 密钥或兼容 API 的密钥。
 -   `OPENAI_API_BASE_URL`: (可选) OpenAI 兼容 API 的基础 URL。默认为 `https://api.openai.com`。
--   `REQUEST_TIMEOUT`: (可选) API 请求超时时间 (毫秒)。默认为 `600000` (10分钟)。
--   `TEMP_DIR`: (可选) 用于存储临时文件的目录。默认为 `./temp_files`。
+-   `REQUEST_TIMEOUT`: (可选) API 请求超时时间 (毫秒)。默认为 `180000` (3分钟)。
 -   `OUTPUT_DIR`: (可选) 用于存储生成媒体文件的基础输出目录。默认为 `./output`。子目录如 `images`, `audio`, `video` 会在此目录下创建。
 
 **图片生成/编辑默认模型配置:**
