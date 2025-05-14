@@ -10,7 +10,7 @@ This project is a Model Context Protocol (MCP) server that integrates various to
 -   **Speech-to-Text (STT)**: Transcribe audio files into text using OpenAI compatible APIs.
 -   **Video Generation**: Submit text-to-video or image-to-video generation tasks using the SiliconFlow API.
 -   **Background Task Processing**: For time-consuming tasks (like image generation/editing with specific models, video generation), the server accepts the task and processes it asynchronously. Notifications are sent via configured channels (OneBot or Telegram) upon completion or failure.
--   **File Upload**: Supports uploading generated images and videos to a configured Cloudflare ImgBed.
+-   **File Upload**: Supports uploading generated images and videos to a configured ImgBed service based on [MarSeventh/CloudFlare-ImgBed](https://github.com/MarSeventh/CloudFlare-ImgBed).
 -   **Local Storage**: All generated media files are saved locally.
 
 ## Prerequisites
@@ -74,9 +74,9 @@ Configure environment variables via a `.env` file in the project root. If the `.
 -   `TELEGRAM_BOT_TOKEN`: (Optional) Telegram Bot Token.
 -   `TELEGRAM_CHAT_ID`: (Optional) Telegram Chat ID.
 
-**Cloudflare R2 ImgBed Configuration (Optional):**
--   `CF_IMGBED_UPLOAD_URL`: (Optional) Upload URL for Cloudflare R2 ImgBed (e.g., `https://your-worker.your-domain.workers.dev/upload`).
--   `CF_IMGBED_API_KEY`: (Optional) `authCode` key for Cloudflare R2 ImgBed.
+**ImgBed Configuration (Optional, for `MarSeventh/CloudFlare-ImgBed`):**
+-   `CF_IMGBED_UPLOAD_URL`: (Optional) Your deployed `CloudFlare-ImgBed` upload URL (e.g., `https://your-worker.your-domain.workers.dev/upload`).
+-   `CF_IMGBED_API_KEY`: (Optional) The `AUTH_KEY` (or `authCode` as referred to in some contexts) configured for your `CloudFlare-ImgBed` instance.
 
 ## Running the Server
 

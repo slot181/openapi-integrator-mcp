@@ -10,7 +10,7 @@
 -   **语音转录 (STT)**: 使用 OpenAI 兼容 API 将音频文件转录为文本。
 -   **视频生成**: 使用 SiliconFlow API 提交文本到视频或图片到视频的生成任务。
 -   **后台任务处理**: 对于耗时较长的任务（如特定模型的图片生成/编辑、视频生成），服务器会接受任务并异步处理，通过配置的通知方式（OneBot 或 Telegram）在任务完成或失败时发送通知。
--   **文件上传**: 支持将生成的图片和视频上传到配置的 Cloudflare ImgBed 图床。
+-   **文件上传**: 支持将生成的图片和视频上传到配置的基于 [MarSeventh/CloudFlare-ImgBed](https://github.com/MarSeventh/CloudFlare-ImgBed) 项目的 ImgBed 服务。
 -   **本地保存**: 所有生成的媒体文件都会保存在本地。
 
 ## 前提条件
@@ -74,9 +74,9 @@
 -   `TELEGRAM_BOT_TOKEN`: (可选) Telegram Bot Token。
 -   `TELEGRAM_CHAT_ID`: (可选) Telegram Chat ID。
 
-**Cloudflare R2 ImgBed 图床配置 (可选):**
--   `CF_IMGBED_UPLOAD_URL`: (可选) Cloudflare R2 ImgBed 的上传 URL (例如 `https://your-worker.your-domain.workers.dev/upload`)。
--   `CF_IMGBED_API_KEY`: (可选) Cloudflare R2 ImgBed 的 `authCode` 密钥。
+**ImgBed 图床配置 (可选, 针对 `MarSeventh/CloudFlare-ImgBed`):**
+-   `CF_IMGBED_UPLOAD_URL`: (可选) 你部署的 `CloudFlare-ImgBed` 实例的上传 URL (例如 `https://your-worker.your-domain.workers.dev/upload`)。
+-   `CF_IMGBED_API_KEY`: (可选) 为你的 `CloudFlare-ImgBed` 实例配置的 `AUTH_KEY` (或在某些上下文中称为 `authCode`)。
 
 ## 运行服务
 
