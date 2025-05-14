@@ -498,9 +498,13 @@ export async function processImageEditInBackground(args, config, axiosInstance) 
     if (args.size)
         formData.append('size', args.size);
     // Only add response_format if the model is NOT gpt-image-1 (or similar special models)
-    if (!modelToUseForEdit.includes('gpt-image-1') && !modelToUseForEdit.includes('dall-e-3')) { // Assuming dall-e-3 also doesn't want this for edits
+    let addedResponseFormat = false;
+    const modelNameLowerEdit = modelToUseForEdit.toLowerCase();
+    if (!modelNameLowerEdit.includes('gpt-image-1') && !modelNameLowerEdit.includes('dall-e-3')) { // Assuming dall-e-3 also doesn't want this for edits
         formData.append('response_format', 'b64_json');
+        addedResponseFormat = true;
     }
+    console.log(`[openapi-integrator-mcp BG] Image Edit: Model used: ${modelToUseForEdit} (normalized to ${modelNameLowerEdit}). Added response_format: ${addedResponseFormat}`);
     let editedImageData;
     try {
         console.info(`[openapi-integrator-mcp BG] Sending image edit request with model ${modelToUseForEdit}.`);

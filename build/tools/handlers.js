@@ -231,9 +231,10 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }) 
                     throw new McpError(ErrorCode.InvalidParams, 'Parameters "image" (string) and "prompt" (string) are required for edit_image.');
                 }
                 const modelToUseForEdit = args.model || config.defaultEditImageModel;
-                const isSpecialModelEdit = modelToUseForEdit.includes('dall-e-3') || modelToUseForEdit.includes('gpt-image-1'); // Assuming same models for edit
+                const modelNameLower = modelToUseForEdit.toLowerCase();
+                const isSpecialModelEdit = modelNameLower.includes('dall-e-3') || modelNameLower.includes('gpt-image-1');
                 if (isSpecialModelEdit) {
-                    console.log(`[openapi-integrator-mcp] Model ${modelToUseForEdit} is special. Starting background processing for edit_image.`);
+                    console.log(`[openapi-integrator-mcp] Model ${modelToUseForEdit} (normalized to ${modelNameLower}) is special. Starting background processing for edit_image.`);
                     processImageEditInBackground(args, config, axiosInstance)
                         .catch(bgError => {
                         console.error('[openapi-integrator-mcp] Critical unhandled error in processImageEditInBackground:', bgError);
@@ -290,9 +291,6 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }) 
                     formData.append('model', modelToUseForEdit); // This model is NOT dall-e-3 or gpt-image-1 here
                     if (args.n)
                         formData.append('n', String(args.n));
-                    // For non-dall-e-3/gpt-image-1 edit models, 'size' might behave differently or not be supported.
-                    // OpenAI's standard edit endpoint (not DALL-E 2 via images/edits) primarily uses 'b64_json' or 'url' for response_format.
-                    // Assuming 'b64_json' for consistency if this path were to be used by a non-special model.
                     formData.append('response_format', 'b64_json');
                     if (args.size)
                         formData.append('size', args.size);
