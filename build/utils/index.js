@@ -467,9 +467,10 @@ export async function processImageEditInBackground(args, config, axiosInstance) 
     }
     catch (accessOrDownloadError) {
         console.error('[openapi-integrator-mcp BG] Failed to access/download image for editing:', accessOrDownloadError.message); // Log in English
-        const userMessage = `❌ 图片编辑预处理失败 (无法访问/下载原图): ${escapeTelegramMarkdown(accessOrDownloadError.message)}\n原图: ${escapeTelegramMarkdown(args.image)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
-        await sendOneBotNotification(config, userMessage);
-        await sendTelegramNotification(config, userMessage);
+        const oneBotErrorMessage = `❌ 图片编辑预处理失败 (无法访问/下载原图): ${accessOrDownloadError.message}\n原图: ${args.image}\n提示词: ${args.prompt}`;
+        const telegramErrorMessage = `❌ 图片编辑预处理失败 (无法访问/下载原图): ${escapeTelegramMarkdown(accessOrDownloadError.message)}\n原图: ${escapeTelegramMarkdown(args.image)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+        await sendOneBotNotification(config, oneBotErrorMessage);
+        await sendTelegramNotification(config, telegramErrorMessage);
         if (cleanupTempFile && fs.existsSync(imagePath))
             await unlink(imagePath).catch(e => console.error(`[BG] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
         return;
@@ -481,9 +482,10 @@ export async function processImageEditInBackground(args, config, axiosInstance) 
     }
     catch (readError) {
         console.error('[openapi-integrator-mcp BG] Failed to read image for editing:', readError.message); // Log in English
-        const userMessage = `❌ 图片编辑预处理失败 (无法读取原图): ${escapeTelegramMarkdown(readError.message)}\n原图: ${escapeTelegramMarkdown(args.image)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
-        await sendOneBotNotification(config, userMessage);
-        await sendTelegramNotification(config, userMessage);
+        const oneBotErrorMessage = `❌ 图片编辑预处理失败 (无法读取原图): ${readError.message}\n原图: ${args.image}\n提示词: ${args.prompt}`;
+        const telegramErrorMessage = `❌ 图片编辑预处理失败 (无法读取原图): ${escapeTelegramMarkdown(readError.message)}\n原图: ${escapeTelegramMarkdown(args.image)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+        await sendOneBotNotification(config, oneBotErrorMessage);
+        await sendTelegramNotification(config, telegramErrorMessage);
         if (cleanupTempFile)
             await unlink(imagePath).catch(e => console.error(`[BG] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
         return;
@@ -510,9 +512,10 @@ export async function processImageEditInBackground(args, config, axiosInstance) 
     }
     catch (apiError) {
         console.error('[openapi-integrator-mcp BG] Image edit API call failed:', apiError.message); // Log in English
-        const userMessage = `❌ 图片编辑失败 (API请求错误): ${escapeTelegramMarkdown(apiError.message)}\n原图: ${escapeTelegramMarkdown(originalImageFilename)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
-        await sendOneBotNotification(config, userMessage);
-        await sendTelegramNotification(config, userMessage);
+        const oneBotErrorMessage = `❌ 图片编辑失败 (API请求错误): ${apiError.message}\n原图: ${originalImageFilename}\n提示词: ${args.prompt}`;
+        const telegramErrorMessage = `❌ 图片编辑失败 (API请求错误): ${escapeTelegramMarkdown(apiError.message)}\n原图: ${escapeTelegramMarkdown(originalImageFilename)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+        await sendOneBotNotification(config, oneBotErrorMessage);
+        await sendTelegramNotification(config, telegramErrorMessage);
         if (cleanupTempFile)
             await unlink(imagePath).catch(e => console.error(`[BG] Failed to cleanup temp edit image ${imagePath}: ${e.message}`));
         return;
@@ -527,9 +530,10 @@ export async function processImageEditInBackground(args, config, axiosInstance) 
     for (const item of editedImageData) {
         if (!item.b64_json) {
             console.warn('[openapi-integrator-mcp BG] API edit response item missing b64_json data.'); // Log in English
-            const userMessage = `❌ 图片编辑部分失败 (API响应缺少图像数据)\n原图: ${escapeTelegramMarkdown(originalImageFilename)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
-            await sendOneBotNotification(config, userMessage);
-            await sendTelegramNotification(config, userMessage);
+            const oneBotErrorMessage = `❌ 图片编辑部分失败 (API响应缺少图像数据)\n原图: ${originalImageFilename}\n提示词: ${args.prompt}`;
+            const telegramErrorMessage = `❌ 图片编辑部分失败 (API响应缺少图像数据)\n原图: ${escapeTelegramMarkdown(originalImageFilename)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+            await sendOneBotNotification(config, oneBotErrorMessage);
+            await sendTelegramNotification(config, telegramErrorMessage);
             continue;
         }
         const imageBuffer = Buffer.from(item.b64_json, 'base64');
@@ -547,9 +551,10 @@ export async function processImageEditInBackground(args, config, axiosInstance) 
             console.error(`[openapi-integrator-mcp BG] Error saving edited image locally: ${err.message}`);
             // processingError = err; // Not used directly for notification here
             localPath = null; // Ensure path is null on error
-            const userMessage = `❌ 图片编辑部分失败 (保存错误): ${escapeTelegramMarkdown(err.message)}\n原图: ${escapeTelegramMarkdown(originalImageFilename)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
-            await sendOneBotNotification(config, userMessage);
-            await sendTelegramNotification(config, userMessage);
+            const oneBotErrorMessage = `❌ 图片编辑部分失败 (保存错误): ${err.message}\n原图: ${originalImageFilename}\n提示词: ${args.prompt}`;
+            const telegramErrorMessage = `❌ 图片编辑部分失败 (保存错误): ${escapeTelegramMarkdown(err.message)}\n原图: ${escapeTelegramMarkdown(originalImageFilename)}\n提示词: ${escapeTelegramMarkdown(args.prompt)}`;
+            await sendOneBotNotification(config, oneBotErrorMessage);
+            await sendTelegramNotification(config, telegramErrorMessage);
             continue;
         }
         await completeImageProcessingAndNotify(imageBuffer, localPath, filename, args, config, 'edit');
