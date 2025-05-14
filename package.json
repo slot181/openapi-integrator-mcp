@@ -1,6 +1,6 @@
 {
   "name": "@stone181/openapi-integrator-mcp",
-  "version": "2.1.4",
+  "version": "2.1.5",
   "description": "Image Generation MCP Server using OpenAI compatible APIs - A Model Context Protocol server for AI image generation",
   "type": "module",
   "main": "build/index.js",

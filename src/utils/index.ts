@@ -7,6 +7,19 @@ import FormData from 'form-data';
 import TelegramBot from 'node-telegram-bot-api'; // Import TelegramBot
 import { AppConfig } from '../types/index.js'; // Import AppConfig
 
+// --- Helper to sanitize prompt for filename ---
+function sanitizePromptForFilename(prompt: string, maxLength: number = 50): string {
+  if (!prompt || typeof prompt !== 'string') {
+    return 'no_prompt';
+  }
+  // Remove characters not allowed in filenames and replace spaces
+  const sanitized = prompt
+    .replace(/[^\w\s\-\.]/g, '') // Allow alphanumeric, whitespace, hyphen, dot
+    .replace(/\s+/g, '_')       // Replace spaces with underscores
+    .substring(0, maxLength);   // Truncate to maxLength
+  return sanitized || 'prompt'; // Ensure not empty
+}
+
 // --- File System Helpers ---
 
 export function isValidHttpUrl(string: string): boolean {
@@ -172,27 +185,39 @@ export async function sendImageUploadNotification(
     taskType: 'generation' | 'edit'
 ): Promise<void> {
     const taskNameChinese = taskType === 'generation' ? '图片生成' : '图片编辑';
-    let userMessage: string;
+    let oneBotMessage: string;
+    let telegramMessage: string;
 
+    // Construct message for OneBot (no Markdown escaping for URLs/paths)
     if (cloudflareUrl) {
-        userMessage = `🖼️ ${taskNameChinese}成功!\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(prompt)}\n图床链接: ${escapeTelegramMarkdown(cloudflareUrl)}`;
+        oneBotMessage = `🖼️ ${taskNameChinese}成功!\n文件名: ${filename}\n提示词: ${prompt}\n图床链接: ${cloudflareUrl}`;
         if (localPath) {
-            userMessage += `\n本地路径: ${escapeTelegramMarkdown(localPath)}`;
+            oneBotMessage += `\n本地路径: ${localPath}`;
         }
     } else if (localPath) {
-        // Saved locally, but no Cloudflare URL (either skipped or failed upload)
-        userMessage = `🖼️ ${taskNameChinese}已保存在本地。\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(prompt)}\n本地路径: ${escapeTelegramMarkdown(localPath)}\n(图床上传未执行或失败)`;
+        oneBotMessage = `🖼️ ${taskNameChinese}已保存在本地。\n文件名: ${filename}\n提示词: ${prompt}\n本地路径: ${localPath}\n(图床上传未执行或失败)`;
     } else {
-        // This case should ideally be handled before calling this function (e.g. if local save failed)
-        userMessage = `⚠️ ${taskNameChinese}处理状态未知 (${escapeTelegramMarkdown(filename)})。请检查日志。\n提示词: ${escapeTelegramMarkdown(prompt)}`;
+        oneBotMessage = `⚠️ ${taskNameChinese}处理状态未知 (${filename})。请检查日志。\n提示词: ${prompt}`;
+    }
+
+    // Construct message for Telegram (with Markdown escaping)
+    if (cloudflareUrl) {
+        telegramMessage = `🖼️ ${taskNameChinese}成功!\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(prompt)}\n图床链接: ${escapeTelegramMarkdown(cloudflareUrl)}`;
+        if (localPath) {
+            telegramMessage += `\n本地路径: ${escapeTelegramMarkdown(localPath)}`;
+        }
+    } else if (localPath) {
+        telegramMessage = `🖼️ ${taskNameChinese}已保存在本地。\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(prompt)}\n本地路径: ${escapeTelegramMarkdown(localPath)}\n(图床上传未执行或失败)`;
+    } else {
+        telegramMessage = `⚠️ ${taskNameChinese}处理状态未知 (${escapeTelegramMarkdown(filename)})。请检查日志。\n提示词: ${escapeTelegramMarkdown(prompt)}`;
         console.warn(`[Notification] sendImageUploadNotification called with no cloudflareUrl and no localPath for ${filename}. This indicates a prior processing error.`);
     }
 
     console.log(`[Notification] Sending image ${taskType} success notification for ${filename}`); // Internal log in English
     // Send notifications concurrently
     await Promise.all([
-        sendOneBotNotification(config, userMessage),
-        sendTelegramNotification(config, userMessage)
+        sendOneBotNotification(config, oneBotMessage),
+        sendTelegramNotification(config, telegramMessage)
     ]);
 }
 
@@ -276,7 +301,8 @@ export function handleSiliconFlowVideoGeneration(
                 try {
                     const videoDir = path.join(config.audioOutputDir, 'video'); // Save in video subdir
                     await ensureDirectoryExists(videoDir);
-                    const videoFilename = `video_${requestId}_${randomUUID()}.mp4`; // Assume mp4
+                    const sanitizedPromptVideoPart = sanitizePromptForFilename(prompt);
+                    const videoFilename = `video_${sanitizedPromptVideoPart}_${requestId}_${randomUUID()}.mp4`; // Assume mp4
                     const localVideoPath = path.join(videoDir, videoFilename);
 
                     console.log(`[SiliconFlow] Downloading video from ${videoUrl} to ${localVideoPath}`);
@@ -359,27 +385,20 @@ async function completeImageProcessingAndNotify(
 
     if (config.cfImgbedUploadUrl && config.cfImgbedApiKey && imageBuffer && localPath) {
         cloudflareUrl = await uploadToCfImgbed(imageBuffer, filename, config.cfImgbedUploadUrl, config.cfImgbedApiKey);
-        if (cloudflareUrl) {
-            // sendImageUploadNotification handles Chinese message construction
-            await sendImageUploadNotification(config, filename, originalArgs.prompt, cloudflareUrl, localPath, taskType);
-        } else {
-            console.error(`[openapi-integrator-mcp BG] Cloudflare upload failed for ${taskNameEnglish} image ${filename}.`); // Internal log in English
-            const userMessage = `🖼️ 图片${taskNameChinese}处理成功，但上传图床失败。\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(originalArgs.prompt)}\n本地路径: ${localPath ? escapeTelegramMarkdown(localPath) : 'N/A'}`;
-            await sendOneBotNotification(config, userMessage);
-            await sendTelegramNotification(config, userMessage);
-        }
-    } else if (config.cfImgbedUploadUrl && config.cfImgbedApiKey) { // CF configured, but upload skipped
-        console.warn(`[openapi-integrator-mcp BG] Skipping Cloudflare upload for ${taskNameEnglish} image ${filename} because local processing failed or buffer/path is missing.`); // Internal log in English
+        // sendImageUploadNotification will construct appropriate messages for OneBot and Telegram
+        await sendImageUploadNotification(config, filename, originalArgs.prompt, cloudflareUrl, localPath, taskType);
+        // No separate notification here if upload failed, sendImageUploadNotification handles it
+    } else if (config.cfImgbedUploadUrl && config.cfImgbedApiKey) { // CF configured, but upload skipped due to missing buffer/path
+        console.warn(`[openapi-integrator-mcp BG] Skipping Cloudflare upload for ${taskNameEnglish} image ${filename} because local processing failed or buffer/path is missing.`);
+        // If localPath exists, send notification about local save and skipped CF upload
         if (localPath) {
-             const userMessage = `🖼️ 图片${taskNameChinese}已保存在本地，但因数据问题跳过上传图床。\n文件名: ${escapeTelegramMarkdown(filename)}\n提示词: ${escapeTelegramMarkdown(originalArgs.prompt)}\n本地路径: ${escapeTelegramMarkdown(localPath)}`;
-             await sendOneBotNotification(config, userMessage);
-             await sendTelegramNotification(config, userMessage);
+            await sendImageUploadNotification(config, filename, originalArgs.prompt, null, localPath, taskType);
         }
+        // If localPath is also null, an error should have been sent by the caller.
     } else if (localPath) { // No Cloudflare config, but saved locally
-        // sendImageUploadNotification handles Chinese message for local-only success
         await sendImageUploadNotification(config, filename, originalArgs.prompt, null, localPath, taskType);
     }
-    // If localPath is null (initial save/download failed), an error notification should have been sent by the caller
+    // If localPath is null (initial save/download failed), an error notification should have been sent by the caller.
 }
 
 
@@ -434,16 +453,20 @@ export async function processImageGenerationInBackground(
     const imagesOutputDir = path.join(config.audioOutputDir, 'images');
     await ensureDirectoryExists(imagesOutputDir);
 
+    const sanitizedPromptPart = sanitizePromptForFilename(args.prompt);
+
     for (const item of responseData) {
         let imageBuffer: Buffer | null = null;
         let localPath: string | null = null;
         const filenamePrefix = 'generated_image';
-        let filename = `${filenamePrefix}_${randomUUID()}.png`;
+        // Incorporate sanitized prompt into filename
+        let filename = `${filenamePrefix}_${sanitizedPromptPart}_${randomUUID()}.png`;
         // let processingError: Error | null = null; // Not used directly for notification here
 
         try {
             if (item.b64_json) {
                 imageBuffer = Buffer.from(item.b64_json, 'base64');
+                // filename is already set with prompt and .png extension
                 localPath = path.join(imagesOutputDir, filename);
                 await fs.promises.writeFile(localPath, imageBuffer);
                 console.info(`[openapi-integrator-mcp BG] Image saved locally from b64_json to: ${localPath}`);
@@ -451,7 +474,8 @@ export async function processImageGenerationInBackground(
                 const imageUrl = item.url;
                 const urlPath = new URL(imageUrl).pathname;
                 const ext = path.extname(urlPath) || '.png';
-                filename = `${filenamePrefix}_${randomUUID()}${ext}`;
+                // Reconstruct filename with extension and prompt
+                filename = `${filenamePrefix}_${sanitizedPromptPart}_${randomUUID()}${ext}`;
                 localPath = path.join(imagesOutputDir, filename);
                 console.log(`[openapi-integrator-mcp BG] Downloading image from ${imageUrl} to ${localPath}`);
                 await downloadFile(imageUrl, localPath);
@@ -555,6 +579,8 @@ export async function processImageEditInBackground(
     const imagesOutputDir = path.join(config.audioOutputDir, 'images');
     await ensureDirectoryExists(imagesOutputDir);
 
+    const sanitizedPromptPartEdit = sanitizePromptForFilename(args.prompt);
+
     for (const item of editedImageData) {
         if (!item.b64_json) {
             console.warn('[openapi-integrator-mcp BG] API edit response item missing b64_json data.'); // Log in English
@@ -567,7 +593,8 @@ export async function processImageEditInBackground(
         const imageBuffer = Buffer.from(item.b64_json, 'base64');
         let localPath: string | null = null;
         const filenamePrefix = 'edited_image';
-        const filename = `${filenamePrefix}_${randomUUID()}.png`;
+        // Incorporate sanitized prompt into filename
+        const filename = `${filenamePrefix}_${sanitizedPromptPartEdit}_${randomUUID()}.png`;
         // let processingError: Error | null = null; // Not used directly for notification here
 
         try {

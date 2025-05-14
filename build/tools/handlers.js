@@ -362,6 +362,11 @@ export async function handleToolCall({ toolName, args, axiosInstance, config }) 
                     throw new McpError(ErrorCode.InvalidParams, 'Parameters "prompt" (string) and "image_size" (string) are required for generate_video.');
                 }
                 const modelToUseForVideo = args.model || config.siliconflowVideoModel;
+                // Validate the model name
+                const supportedVideoModels = ["Wan-AI/Wan2.1-T2V-14B", "Wan-AI/Wan2.1-T2V-14B-Turbo", "Wan-AI/Wan2.1-I2V-14B-720P", "Wan-AI/Wan2.1-I2V-14B-720P-Turbo"];
+                if (!supportedVideoModels.includes(modelToUseForVideo)) {
+                    throw new McpError(ErrorCode.InvalidParams, `Invalid model for generate_video: "${modelToUseForVideo}". Supported models are: ${supportedVideoModels.join(', ')}.`);
+                }
                 const isImageToVideoModel = modelToUseForVideo.includes('I2V'); // Check if it's an Image-to-Video model
                 // Validate 'image' parameter based on model type
                 if (isImageToVideoModel && (!args.image || typeof args.image !== 'string')) {
