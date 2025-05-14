@@ -1,188 +1,167 @@
-# OpenAI Image Generation MCP Server
+# OpenAI / SiliconFlow API MCP Server (English)
 
-A Model Context Protocol (MCP) server that enables seamless generation of high-quality images using OpenAI compatible APIs. This server provides a standardized interface to specify image generation parameters.
+This project is a Model Context Protocol (MCP) server that integrates various tools based on OpenAI compatible APIs and SiliconFlow APIs. It offers a range of functionalities including image generation, image editing, speech synthesis (TTS), speech-to-text (STT), and video generation.
 
-<a href="https://glama.ai/mcp/servers/y6qfizhsja">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/y6qfizhsja/badge" alt="Image Generation Server MCP server" />
-</a>
+## Core Features
 
-## Features
-
-- High-quality image generation powered by OpenAI compatible APIs
-- Support for customizable dimensions (width and height)
-- Clear error handling for prompt validation and API issues
-- Easy integration with MCP-compatible clients
-- Returns a direct URL to the generated image
-
-## Installation
-
-```bash
-npm install openai-image-mcp
-```
-
-Or run directly:
-
-```bash
-npx openai-image-mcp@latest
-```
-
-### Configuration
-
-Add to your MCP server configuration:
-
-<summary>Configuration Example</summary>
-
-```json
-{
-  "mcpServers": {
-    "openai-image-gen": {
-      "command": "npx",
-      "args": ["openai-image-mcp@latest -y"],
-      "env": {
-        "OPENAI_API_KEY": "<YOUR_API_KEY>",
-        "OPENAI_API_URL": "<OPTIONAL_API_ENDPOINT_URL>", // Optional: Defaults to OpenAI standard endpoint if not provided
-        "DEFAULT_MODEL": "<OPTIONAL_DEFAULT_MODEL_NAME>" // Optional: Defaults to 'black-forest-labs/FLUX.1-schnell-Free' if not provided
-      }
-    }
-  }
-}
-```
-
-## Usage
-
-The server provides one tool: `generate_image`
-
-### Using generate_image
-
-This tool requires a `prompt`. Other parameters like `model`, `width`, `height`, `steps`, and `n` are optional and use defaults if not provided. It returns a direct URL to the generated image.
-
-#### Parameters
-
-```typescript
-{
-  // Required
-  prompt: string;          // Text description of the image to generate
-
-  // Optional with defaults
-  model?: string;          // Default: "black-forest-labs/FLUX.1-schnell-Free"
-  width?: number;          // Default: 1024 (min: 128, max: 2048)
-  height?: number;         // Default: 768 (min: 128, max: 2048)
-  steps?: number;          // Default: 1 (min: 1, max: 100)
-  n?: number;             // Default: 1 (max: 4)
-  // response_format is always "url"
-  // image_path is removed
-}
-```
-
-#### Minimal Request Example
-
-Only the prompt is required:
-
-```json
-{
-  "name": "generate_image",
-  "arguments": {
-    "prompt": "A serene mountain landscape at sunset"
-  }
-}
-```
-
-#### Full Request Example
-
-Override defaults:
-
-```json
-{
-  "name": "generate_image",
-  "arguments": {
-    "prompt": "A futuristic cityscape at night",
-    "model": "dall-e-3", // Example model
-    "width": 1024,
-    "height": 1024,
-    "steps": 50,
-    "n": 1
-  }
-}
-```
-
-#### Response Format
-
-The response will be a simple text string containing the direct URL to the generated image.
-
-Example Response:
-```text
-https://image-provider.com/path/to/generated/image.png
-```
-It is recommended that clients display this URL as a clickable link or directly render the image using Markdown, e.g., `![Generated Image](URL)`.
-
-(Response format details updated above)
-
-### Default Values
-
-If not specified in the request, these defaults are used:
-
-- model: "black-forest-labs/FLUX.1-schnell-Free"
-- width: 1024
-- height: 768
-- steps: 1
-- n: 1
-- response_format: "url" (This is now fixed and cannot be changed)
-
-### Important Notes
-
-1. Only the `prompt` parameter is required
-2. All optional parameters use defaults if not provided
-3. When provided, parameters must meet their constraints (e.g., width/height ranges)
-4. The server now always returns a direct URL to the image.
-5. Image saving to disk is no longer supported by this server.
+-   **Image Generation**: Generate images using OpenAI compatible APIs (e.g., DALL-E 3, gpt-image-1, or other Stable Diffusion models).
+-   **Image Editing**: Edit images using OpenAI compatible APIs (e.g., gpt-image-1).
+-   **Speech Synthesis (TTS)**: Convert text into speech using OpenAI compatible APIs.
+-   **Speech-to-Text (STT)**: Transcribe audio files into text using OpenAI compatible APIs.
+-   **Video Generation**: Submit text-to-video or image-to-video generation tasks using the SiliconFlow API.
+-   **Background Task Processing**: For time-consuming tasks (like image generation/editing with specific models, video generation), the server accepts the task and processes it asynchronously. Notifications are sent via configured channels (OneBot or Telegram) upon completion or failure.
+-   **File Upload**: Supports uploading generated images and videos to a configured Cloudflare R2 ImgBed.
+-   **Local Storage**: All generated media files are saved locally.
 
 ## Prerequisites
 
-- Node.js >= 16
-- OpenAI compatible API key (`OPENAI_API_KEY`)
-- Optional: OpenAI API URL (`OPENAI_API_URL`) if using a non-standard endpoint (e.g., self-hosted or alternative provider). If not provided, defaults to the standard OpenAI API endpoint.
-- Optional: Default Model Name (`DEFAULT_MODEL`) to override the built-in default (`black-forest-labs/FLUX.1-schnell-Free`).
+-   Node.js (recommended version >= 18.x)
+-   Relevant API keys (OpenAI/compatible API key, SiliconFlow API key, etc.)
 
-## Dependencies
+## Installation and Setup
 
-```json
-{
-  "@modelcontextprotocol/sdk": "0.6.0",
-  "axios": "^1.6.7"
-}
-```
+1.  **Clone the project** (if you haven't already):
+    ```bash
+    git clone <project_repository_url>
+    cd openapi-integrator-mcp
+    ```
 
-## Development
+2.  **Install dependencies**:
+    ```bash
+    npm install
+    ```
 
-Clone and build the project:
+3.  **Build the project**:
+    ```bash
+    npm run build
+    ```
+    The build output will be in the `build` directory.
 
-```bash
-git clone https://github.com/your-username/openai-image-mcp
-cd openai-image-mcp
-npm install
-npm run build
-```
+## Configuration
 
-### Available Scripts
+Configure environment variables via a `.env` file in the project root. If the `.env` file does not exist, create it based on `.env.example` (if provided) or the list below.
 
-- `npm run build` - Build the TypeScript project
-- `npm run watch` - Watch for changes and rebuild
-- `npm run inspector` - Run MCP inspector
+### Key Environment Variables:
 
-## Contributing
+-   `OPENAI_API_KEY`: (Required) Your OpenAI API key or a compatible API key.
+-   `OPENAI_API_BASE_URL`: (Optional) Base URL for the OpenAI compatible API. Defaults to `https://api.openai.com`.
+-   `REQUEST_TIMEOUT`: (Optional) API request timeout in milliseconds. Defaults to `600000` (10 minutes).
+-   `TEMP_DIR`: (Optional) Directory for storing temporary files. Defaults to `./temp_files`.
+-   `OUTPUT_DIR`: (Optional) Base output directory for generated media files. Defaults to `./output`. Subdirectories like `images`, `audio`, `video` will be created here.
 
-Contributions are welcome! Please follow these steps:
+**Default Model Configuration for Image Generation/Editing:**
+-   `DEFAULT_IMAGE_MODEL`: (Optional) Default image generation model. Defaults to `dall-e-3`.
+-   `DEFAULT_EDIT_IMAGE_MODEL`: (Optional) Default image editing model. Defaults to `gpt-image-1`.
+-   `DEFAULT_IMAGE_WIDTH`: (Optional) Default image width (for non-DALL-E 3/gpt-image-1 models). Defaults to `1024`.
+-   `DEFAULT_IMAGE_HEIGHT`: (Optional) Default image height (for non-DALL-E 3/gpt-image-1 models). Defaults to `768`.
+-   `DEFAULT_IMAGE_STEPS`: (Optional) Default image generation steps (for non-DALL-E 3/gpt-image-1 models). Defaults to `20`.
 
-1. Fork the repository
-2. Create a new branch (`feature/my-new-feature`)
-3. Commit your changes
-4. Push the branch to your fork
-5. Open a Pull Request
+**Default Speech Configuration:**
+-   `DEFAULT_SPEECH_MODEL`: (Optional) Default speech synthesis model. Defaults to `tts-1`.
+-   `DEFAULT_SPEECH_VOICE`: (Optional) Default speech synthesis voice. Defaults to `alloy`.
+-   `DEFAULT_SPEECH_SPEED`: (Optional) Default speech synthesis speed. Defaults to `1.0`.
+-   `DEFAULT_TRANSCRIPTION_MODEL`: (Optional) Default speech transcription model. Defaults to `whisper-1`.
 
-Feature requests and bug reports can be submitted via GitHub Issues. Please check existing issues before creating a new one.
+**SiliconFlow Video Generation Configuration:**
+-   `SILICONFLOW_API_KEY`: (Optional, Required if using video generation) SiliconFlow API key.
+-   `SILICONFLOW_BASE_URL`: (Optional) SiliconFlow API base URL. Defaults to `https://api.siliconflow.cn`.
+-   `SILICONFLOW_VIDEO_MODEL`: (Optional) Default video generation model. Defaults to `Wan-AI/Wan2.1-T2V-14B-Turbo`.
 
-For significant changes, please open an issue first to discuss your proposed changes.
+**Notification Configuration (configure at least one to receive background task results):**
+-   `ONEBOT_HTTP_URL`: (Optional) OneBot HTTP post URL (e.g., `http://localhost:5700`).
+-   `ONEBOT_ACCESS_TOKEN`: (Optional) OneBot Access Token (if required).
+-   `ONEBOT_MESSAGE_TYPE`: (Optional) OneBot message type (`private` or `group`).
+-   `ONEBOT_TARGET_ID`: (Optional) OneBot target user ID or group ID.
+-   `TELEGRAM_BOT_TOKEN`: (Optional) Telegram Bot Token.
+-   `TELEGRAM_CHAT_ID`: (Optional) Telegram Chat ID.
+
+**Cloudflare R2 ImgBed Configuration (Optional):**
+-   `CF_IMGBED_UPLOAD_URL`: (Optional) Upload URL for Cloudflare R2 ImgBed (e.g., `https://your-worker.your-domain.workers.dev/upload`).
+-   `CF_IMGBED_API_KEY`: (Optional) `authCode` key for Cloudflare R2 ImgBed.
+
+## Running the Server
+
+-   **Production Mode**:
+    ```bash
+    npm start
+    ```
+    This will run the JavaScript files from the `build` directory.
+
+-   **Development Mode** (uses ts-node-dev for hot-reloading):
+    ```bash
+    npm run dev
+    ```
+
+Once started, the MCP server will listen for requests on standard input/output (stdio).
+
+## Available MCP Tools
+
+### 1. `generate_image`
+
+Generates an image.
+
+-   **Function**: Creates an image based on a text prompt using OpenAI compatible APIs. Supports various models like DALL-E 3, gpt-image-1, and others. For DALL-E 3/gpt-image-1, tasks are processed in the background with results sent via notification. Other models return results synchronously.
+-   **Key Parameters**:
+    -   `prompt` (string, required): Description of the image.
+    -   `model` (string, optional): Model to use, defaults to `DEFAULT_IMAGE_MODEL` from config.
+    -   `n` (number, optional): Number of images to generate.
+    -   (DALL-E 3/gpt-image-1 specific): `quality`, `size`, `background`, `moderation`.
+    -   (Other models specific): `width`, `height`, `steps`.
+
+### 2. `edit_image`
+
+Edits an image.
+
+-   **Function**: Modifies an existing image based on a text prompt using models like `gpt-image-1`. Tasks are processed in the background with results sent via notification.
+-   **Key Parameters**:
+    -   `image` (string, required): Path or URL of the image to edit.
+    -   `prompt` (string, required): Editing instructions.
+    -   `model` (string, optional): Model to use, defaults to `DEFAULT_EDIT_IMAGE_MODEL` from config.
+    -   `n` (number, optional): Number of images to generate.
+    -   `size` (string, optional): Output image size.
+
+### 3. `generate_speech`
+
+Text-to-Speech.
+
+-   **Function**: Converts text into an audio file (MP3 format) and saves it locally.
+-   **Key Parameters**:
+    -   `input` (string, required): Text to convert to speech.
+    -   `voice` (string, required): Voice to use.
+    -   `model` (string, optional): Model to use, defaults to `DEFAULT_SPEECH_MODEL` from config.
+    -   `speed` (number, optional): Speech speed, defaults to `DEFAULT_SPEECH_SPEED` from config.
+
+### 4. `transcribe_audio`
+
+Speech-to-Text.
+
+-   **Function**: Transcribes an audio file into text.
+-   **Key Parameters**:
+    -   `file` (string, required): Local path or URL of the audio file.
+    -   `model` (string, optional): Model to use, defaults to `DEFAULT_TRANSCRIPTION_MODEL` from config.
+
+### 5. `generate_video`
+
+Generates a video.
+
+-   **Function**: Submits a video generation task to the SiliconFlow API. Supports text-to-video and image-to-video. Tasks are processed in the background with results sent via notification.
+-   **Key Parameters**:
+    -   `prompt` (string, required): Description of the video.
+    -   `image_size` (string, required): Video dimensions/aspect ratio (e.g., "1280x720").
+    -   `model` (string, optional): Video model to use, defaults to `SILICONFLOW_VIDEO_MODEL` from config. Supported models include: `Wan-AI/Wan2.1-T2V-14B`, `Wan-AI/Wan2.1-T2V-14B-Turbo`, `Wan-AI/Wan2.1-I2V-14B-720P`, `Wan-AI/Wan2.1-I2V-14B-720P-Turbo`.
+    -   `image` (string, optional): Image URL or Base64 encoded data, required for Image-to-Video models.
+    -   `negative_prompt` (string, optional): Negative prompt.
+    -   `seed` (integer, optional): Random seed.
+
+## Notification Feature
+
+For tasks processed in the background (e.g., specific image generation/editing, video generation), results will be sent via notifications configured through:
+
+-   **OneBot**: If `ONEBOT_HTTP_URL`, `ONEBOT_MESSAGE_TYPE`, and `ONEBOT_TARGET_ID` are configured.
+-   **Telegram**: If `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are configured.
+
+Please ensure at least one notification method is configured to receive results for background tasks.
 
 ## License
 
-This project is licensed under the MIT License. See the LICENSE file for details.
+This project is licensed under the MIT License. See the `LICENSE` file for details.
